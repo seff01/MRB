@@ -27,6 +27,7 @@
   }
   .toolbar { display:grid; grid-template-columns: 1.3fr 1.3fr .8fr 1fr .9fr; gap:10px; margin-bottom:10px; }
   .button-row { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:8px; }
+  .top-data-row { justify-content:flex-end; }
   .button-row button { min-width:126px; }
   .button-row .spacer { flex:1; }
   .field { display:flex; flex-direction:column; gap:6px; }
@@ -146,7 +147,7 @@
   <div class="card">
     <h1>Inventory Count Scanner</h1>
 
-    <div class="button-row">
+    <div class="button-row top-data-row">
       <button id="loadLookupBtn" class="secondary">Load Lookup File</button>
       <input id="lookupFileInput" type="file" accept=".xlsx,.xls,.xlsm,.xlsb,.csv,.txt,.xml" class="hidden" />
       <button id="clearLookupBtn">Clear Lookup</button>
