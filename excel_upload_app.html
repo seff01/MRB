@@ -27,7 +27,7 @@
   }
   .toolbar { display:grid; grid-template-columns: 1.3fr 1.3fr .8fr 1fr .9fr; gap:10px; margin-bottom:10px; }
   .button-row { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:8px; }
-  .button-row button { min-width:140px; }
+  .button-row button { min-width:126px; }
   .button-row .spacer { flex:1; }
   .field { display:flex; flex-direction:column; gap:6px; }
   label { font-size: 12px; color: var(--muted); }
@@ -90,8 +90,8 @@
   }
   input:focus { outline:none; border-color:#60a5fa; box-shadow:0 0 0 2px rgba(96,165,250,.15); }
   button {
-    background:#0b1220; color:var(--text); border:1px solid var(--line); border-radius:10px; padding:10px 12px; cursor:pointer; font-weight:600;
-    align-self:end; min-height:42px;
+    background:#0b1220; color:var(--text); border:1px solid var(--line); border-radius:10px; padding:9px 11px; cursor:pointer; font-weight:600;
+    align-self:end; min-height:40px; font-size:13px;
   }
   button.primary { background:#15803d; border-color:#22c55e; }
   button.danger { background:#7f1d1d; border-color:#ef4444; }
@@ -146,6 +146,15 @@
   <div class="card">
     <h1>Inventory Count Scanner</h1>
 
+    <div class="button-row">
+      <button id="loadLookupBtn" class="secondary">Load Lookup File</button>
+      <input id="lookupFileInput" type="file" accept=".xlsx,.xls,.xlsm,.xlsb,.csv,.txt,.xml" class="hidden" />
+      <button id="clearLookupBtn">Clear Lookup</button>
+      <button id="importMergeBtn">Import & Merge Data</button>
+      <input id="importMergeFileInput" type="file" accept=".xlsx,.xls,.xlsm,.xlsb,.xml,.csv,.txt" class="hidden" />
+      <button id="exportDataBtn" class="secondary">Export Data</button>
+    </div>
+
     <div class="tabs">
       <button class="tab-btn" data-tab="summaryTab">Summary by PN-R</button>
       <button class="tab-btn active" data-tab="racksTab">Pallets</button>
@@ -188,15 +197,6 @@
       <button id="undoBtn">Undo Last</button>
       <button id="clearBtn" class="danger">Clear All</button>
     </div>
-    <div class="button-row">
-      <button id="loadLookupBtn" class="secondary">Load Lookup File</button>
-      <input id="lookupFileInput" type="file" accept=".xlsx,.xls,.xlsm,.xlsb,.csv,.txt,.xml" class="hidden" />
-      <button id="clearLookupBtn">Clear Lookup</button>
-      <button id="importMergeBtn">Import & Merge Data</button>
-      <input id="importMergeFileInput" type="file" accept=".xlsx,.xls,.xlsm,.xlsb,.xml,.csv,.txt" class="hidden" />
-      <button id="exportDataBtn" class="secondary">Export Data</button>
-    </div>
-
     <div id="statusMsg" class="status muted"></div>
 
     <div class="metrics">
