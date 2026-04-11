@@ -993,16 +993,31 @@ function renderPallets() {
 
 function getPalletExplorerData() {
   return getPalletGroups().map(group => {
-    const boxToSerials = new Map();
+    const boxStats = new Map();
     group.rows.forEach(row => {
       const boxId = normalize(row.l10BoxId || "") || "(NO BOX ID)";
-      if (!boxToSerials.has(boxId)) boxToSerials.set(boxId, new Set());
       const sn = normalize(row.serial || "");
-      if (sn) boxToSerials.get(boxId).add(sn);
+      const gpn = normalize(row.pnr || "");
+      if (!boxStats.has(boxId)) {
+        boxStats.set(boxId, {
+          serials: new Set(),
+          gpns: new Set(),
+          unitCount: 0
+        });
+      }
+      const stats = boxStats.get(boxId);
+      stats.unitCount += 1;
+      if (sn) stats.serials.add(sn);
+      if (gpn) stats.gpns.add(gpn);
     });
-    const boxes = Array.from(boxToSerials.entries())
-      .map(([boxId, serials]) => ({ boxId, serials: Array.from(serials).sort() }))
-      .sort((a, b) => b.serials.length - a.serials.length || a.boxId.localeCompare(b.boxId));
+    const boxes = Array.from(boxStats.entries())
+      .map(([boxId, stats]) => ({
+        boxId,
+        serials: Array.from(stats.serials).sort(),
+        gpns: Array.from(stats.gpns).sort(),
+        unitCount: stats.unitCount
+      }))
+      .sort((a, b) => b.unitCount - a.unitCount || a.boxId.localeCompare(b.boxId));
     return {
       ...group,
       boxes
@@ -1047,10 +1062,11 @@ async function renderPalletExplorer() {
       const boxKey = `${pallet.palletId}::${box.boxId}`;
       const boxOpen = expandedExplorerBoxes.has(boxKey);
       const snList = box.serials.map((sn, snIdx) => `<tr><td>${snIdx + 1}</td><td>${escapeHtml(sn)}</td></tr>`).join("");
+      const gpnDisplay = box.gpns.length ? box.gpns.map(gpn => escapeHtml(gpn)).join(", ") : '<span class="muted">-</span>';
       const snTable = boxOpen
         ? `
           <tr>
-            <td colspan="4" class="explorer-detail-cell">
+            <td colspan="5" class="explorer-detail-cell">
               <table class="rack-subtable">
                 <thead>
                   <tr><th style="width:60px;">#</th><th>Serial Number</th></tr>
@@ -1064,7 +1080,8 @@ async function renderPalletExplorer() {
         <tr class="explorer-box-row" data-box-key="${escapeHtml(boxKey)}">
           <td style="width:60px;">${index + 1}</td>
           <td><strong>${escapeHtml(box.boxId)}</strong></td>
-          <td class="right" style="width:120px;">${box.serials.length}</td>
+          <td>${gpnDisplay}</td>
+          <td class="right" style="width:120px;">${box.unitCount}</td>
           <td style="width:110px;">${boxOpen ? "Hide SNs" : "Show SNs"}</td>
         </tr>
         ${snTable}
@@ -1078,11 +1095,12 @@ async function renderPalletExplorer() {
             <tr>
               <th style="width:60px;">#</th>
               <th>L10 Box ID</th>
-              <th class="right" style="width:120px;">Unique SNs</th>
+              <th>GPN(s)</th>
+              <th class="right" style="width:120px;">Total Units</th>
               <th style="width:110px;">Action</th>
             </tr>
           </thead>
-          <tbody>${boxRows || '<tr><td colspan="4" class="muted">No box IDs.</td></tr>'}</tbody>
+          <tbody>${boxRows || '<tr><td colspan="5" class="muted">No box IDs.</td></tr>'}</tbody>
         </table>
       </td>
     `;
