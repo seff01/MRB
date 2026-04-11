@@ -1,0 +1,1121 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Inventory Count Scanner</title>
+<style>
+  :root {
+    --bg:#0f172a; --panel:#111827; --panel2:#1f2937; --text:#e5e7eb; --muted:#9ca3af;
+    --accent:#22c55e; --accent2:#3b82f6; --danger:#ef4444; --warn:#f59e0b; --line:#374151;
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family: Arial, Helvetica, sans-serif; background:linear-gradient(135deg,#0b1220,#101827); color:var(--text); }
+  .wrap { max-width: 1200px; margin: 18px auto; padding: 14px; }
+  .card { background: rgba(17,24,39,.95); border:1px solid var(--line); border-radius: 14px; padding: 14px; box-shadow: 0 10px 30px rgba(0,0,0,.25); }
+  h1 { margin:0 0 8px 0; font-size: 24px; }
+  .sub { color: var(--muted); font-size: 13px; margin-bottom: 14px; }
+  .tabs { display:flex; gap:8px; margin-bottom: 12px; flex-wrap:wrap; }
+  .tab-btn {
+    background: #0b1220; color: var(--text); border:1px solid var(--line); border-radius: 10px;
+    padding: 8px 12px; cursor:pointer; font-weight:600;
+  }
+  .tab-btn.active { background: #1d4ed8; border-color:#2563eb; }
+  .toolbar { display:grid; grid-template-columns: 1.6fr 1.6fr .8fr .8fr auto auto auto auto; gap:10px; margin-bottom:12px; }
+  .field { display:flex; flex-direction:column; gap:6px; }
+  label { font-size: 12px; color: var(--muted); }
+  input {
+    background:#0b1220; border:1px solid var(--line); color:var(--text); border-radius:10px;
+    padding: 10px 12px; font-size: 15px; width:100%;
+  }
+  input:focus { outline:none; border-color:#60a5fa; box-shadow:0 0 0 2px rgba(96,165,250,.15); }
+  button {
+    background:#0b1220; color:var(--text); border:1px solid var(--line); border-radius:10px; padding:10px 12px; cursor:pointer; font-weight:600;
+    align-self:end; min-height:42px;
+  }
+  button.primary { background:#15803d; border-color:#22c55e; }
+  button.danger { background:#7f1d1d; border-color:#ef4444; }
+  button.secondary { background:#1d4ed8; border-color:#3b82f6; }
+  .status { margin: 6px 0 12px; font-size: 13px; }
+  .status.ok { color:#86efac; }
+  .status.warn { color:#fcd34d; }
+  .status.err { color:#fca5a5; }
+  .metrics { display:flex; gap:10px; flex-wrap:wrap; margin-bottom:12px; }
+  .pill { background:#0b1220; border:1px solid var(--line); border-radius:999px; padding:8px 12px; font-size:13px; }
+  .hidden { display:none; }
+  table { width:100%; border-collapse: collapse; }
+  th, td { border-bottom:1px solid var(--line); padding:8px 10px; text-align:left; font-size:13px; }
+  th { color:#cbd5e1; position: sticky; top:0; background:#111827; z-index: 2; }
+  .table-wrap { max-height: 460px; overflow:auto; border:1px solid var(--line); border-radius: 12px; }
+  .right { text-align:right; }
+  .muted { color:var(--muted); }
+  .row-dup { background: rgba(245,158,11,.08); }
+  .row-notfound { background: rgba(239,68,68,.08); }
+  .controls2 { display:flex; gap:8px; flex-wrap:wrap; margin:8px 0 12px; }
+  .rack-row { cursor:pointer; }
+  .rack-row:hover { background: rgba(59,130,246,.08); }
+  .rack-subtable { margin: 8px 0 12px; width:100%; border-collapse: collapse; }
+  .rack-subtable th, .rack-subtable td { border:1px solid var(--line); padding:6px 8px; font-size:12px; }
+  .rack-subtable th { color: var(--muted); text-align:left; background:#0b1220; }
+  .rack-detail-cell { background: rgba(11,18,32,.55); padding:8px; }
+
+  @media (max-width: 900px) {
+    .toolbar { grid-template-columns: 1fr; }
+    button { width:100%; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <h1>Inventory Count Scanner</h1>
+    <div class="sub">Scan Serial Number in the first field. PN-R auto-fills from your Excel mapping (Column A → Column B). Auto Submit can be turned on or off, and when it is on the entry will also submit automatically after a required PN-R / GPN scan.</div>
+
+    <div class="tabs">
+      <button class="tab-btn" data-tab="summaryTab">Summary by PN-R</button>
+      <button class="tab-btn active" data-tab="racksTab">Racks</button>
+    </div>
+
+    <div class="toolbar">
+      <div class="field">
+        <label for="serialInput">Serial Number (scan here)</label>
+        <input id="serialInput" autocomplete="off" placeholder="Scan or type Serial Number" />
+      </div>
+      <div class="field">
+        <label for="pnrInput">PN-R / GPN (auto-filled)</label>
+        <input id="pnrInput" autocomplete="off" placeholder="PN-R will auto-fill from Serial Number" />
+      </div>
+      <div class="field">
+        <label for="initialsInput">Initials</label>
+        <input id="initialsInput" autocomplete="off" placeholder="e.g. JQ" maxlength="8" />
+      </div>
+      <div class="field">
+        <label for="rackInput">Rack</label>
+        <input id="rackInput" autocomplete="off" placeholder="e.g. RACK-A1" maxlength="20" />
+      </div>
+      <div class="field">
+        <label for="autoSubmitToggle">Auto Submit Mode</label>
+        <label style="display:flex;align-items:center;gap:10px;min-height:44px;padding:0 12px;border:1px solid var(--border);border-radius:12px;background:rgba(255,255,255,.03);cursor:pointer;user-select:none;">
+          <input id="autoSubmitToggle" type="checkbox" checked />
+          <span>Enable auto submit</span>
+        </label>
+      </div>
+      <button id="addRackBtn" class="secondary">Add Rack</button>
+      <button id="addBtn" class="primary">Add Entry</button>
+      <button id="undoBtn">Undo Last</button>
+      <button id="clearBtn" class="danger">Clear All</button>
+      <button id="loadLookupBtn" class="secondary">Load Lookup File</button>
+      <input id="lookupFileInput" type="file" accept=".csv,.txt,.xls,.xml" class="hidden" />
+      <button id="clearLookupBtn">Clear Lookup</button>
+    </div>
+
+    <div id="statusMsg" class="status muted">Ready.</div>
+
+    <div class="metrics">
+      <div class="pill">Total Scans: <strong id="totalScans">0</strong></div>
+      <div class="pill">Unique Serials: <strong id="uniqueSerials">0</strong></div>
+      <div class="pill">Unique PN-R: <strong id="uniquePnrs">0</strong></div>
+      <div class="pill">Lookup Map Entries: <strong id="mapCount">0</strong></div>
+    </div>
+
+    <div id="summaryTab" class="tab-panel hidden">
+      <div class="table-wrap">
+        <table id="summaryTable">
+          <thead>
+            <tr>
+              <th style="width:50px;">#</th>
+              <th>PN-R</th>
+              <th class="right" style="width:120px;">Count</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+
+    <div id="racksTab" class="tab-panel">
+      <div class="controls2">
+        <button id="importMergeBtn">Import & Merge Data</button>
+        <input id="importMergeFileInput" type="file" accept=".xls,.xml" class="hidden" />
+        <button id="exportDataBtn" class="secondary">Export Data</button>
+      </div>
+      <div class="table-wrap">
+        <table id="racksTable">
+          <thead>
+            <tr>
+              <th style="width:50px;">#</th>
+              <th>Rack</th>
+              <th class="right" style="width:120px;">Total Scans</th>
+              <th class="right" style="width:140px;">Unique Serials</th>
+              <th class="right" style="width:120px;">Unique PN-R</th>
+              <th style="width:110px;">Action</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+const LOOKUP_MAP_KEY = "inventory_lookup_map_v1";
+const STORAGE_KEY = "inventory_count_scans_v1";
+const AUTO_SUBMIT_KEY = "inventory_count_auto_submit_enabled_v1";
+
+const serialInput = document.getElementById("serialInput");
+const pnrInput = document.getElementById("pnrInput");
+const initialsInput = document.getElementById("initialsInput");
+const rackInput = document.getElementById("rackInput");
+const autoSubmitToggle = document.getElementById("autoSubmitToggle");
+const addRackBtn = document.getElementById("addRackBtn");
+const addBtn = document.getElementById("addBtn");
+const undoBtn = document.getElementById("undoBtn");
+const clearBtn = document.getElementById("clearBtn");
+const loadLookupBtn = document.getElementById("loadLookupBtn");
+const lookupFileInput = document.getElementById("lookupFileInput");
+const clearLookupBtn = document.getElementById("clearLookupBtn");
+const importMergeBtn = document.getElementById("importMergeBtn");
+const importMergeFileInput = document.getElementById("importMergeFileInput");
+const exportDataBtn = document.getElementById("exportDataBtn");
+const statusMsg = document.getElementById("statusMsg");
+const totalScansEl = document.getElementById("totalScans");
+const uniqueSerialsEl = document.getElementById("uniqueSerials");
+const uniquePnrsEl = document.getElementById("uniquePnrs");
+const mapCountEl = document.getElementById("mapCount");
+const summaryTbody = document.querySelector("#summaryTable tbody");
+const detailsTbody = document.querySelector("#detailsTable tbody");
+const racksTbody = document.querySelector("#racksTable tbody");
+const filterInput = document.getElementById("filterInput");
+
+let scans = loadScans();
+let serialToPnr = loadLookupMap();
+const expandedRacks = new Set();
+
+function loadAutoSubmitEnabled() {
+  try {
+    const raw = localStorage.getItem(AUTO_SUBMIT_KEY);
+    if (raw === null) return true;
+    return raw === "true";
+  } catch {
+    return true;
+  }
+}
+
+function persistAutoSubmitEnabled(enabled) {
+  try {
+    localStorage.setItem(AUTO_SUBMIT_KEY, String(!!enabled));
+  } catch {}
+}
+
+function isAutoSubmitEnabled() {
+  return !!autoSubmitToggle?.checked;
+}
+
+function nowStamp() {
+  const d = new Date();
+  const pad = n => String(n).padStart(2,'0');
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+
+function setStatus(text, type="muted") {
+  statusMsg.textContent = text;
+  statusMsg.className = "status " + type;
+}
+
+let _audioCtx = null;
+function playDuplicateSound() {
+  try {
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    if (!AudioCtx) return;
+    if (!_audioCtx) _audioCtx = new AudioCtx();
+    if (_audioCtx.state === "suspended") _audioCtx.resume();
+    const now = _audioCtx.currentTime;
+    const gain = _audioCtx.createGain();
+    gain.connect(_audioCtx.destination);
+
+    const pulse = (freq, start, dur=0.08) => {
+      const osc = _audioCtx.createOscillator();
+      osc.type = "square";
+      osc.frequency.setValueAtTime(freq, start);
+      osc.connect(gain);
+      osc.start(start);
+      osc.stop(start + dur);
+    };
+
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(0.12, now + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.09);
+    gain.gain.setValueAtTime(0.0001, now + 0.10);
+    gain.gain.exponentialRampToValueAtTime(0.12, now + 0.11);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.19);
+
+    pulse(880, now);
+    pulse(660, now + 0.10);
+  } catch (e) {
+    console.warn("Duplicate sound failed:", e);
+  }
+}
+
+function normalize(v) {
+  return (v ?? "").toString().trim().toUpperCase();
+}
+
+function initializeAutoSubmitToggle() {
+  if (!autoSubmitToggle) return;
+  autoSubmitToggle.checked = loadAutoSubmitEnabled();
+  autoSubmitToggle.addEventListener("change", () => {
+    persistAutoSubmitEnabled(autoSubmitToggle.checked);
+    if (autoSubmitTimer) {
+      clearTimeout(autoSubmitTimer);
+      autoSubmitTimer = null;
+    }
+    setStatus(
+      autoSubmitToggle.checked
+        ? "Auto Submit enabled. Serial scans and required PN-R / GPN scans will submit automatically."
+        : "Auto Submit disabled. Use Enter or click Add Entry to submit.",
+      autoSubmitToggle.checked ? "ok" : "warn"
+    );
+    serialInput.focus();
+  });
+}
+
+function autoFillPNR() {
+  const sn = normalize(serialInput.value);
+  if (!sn) {
+    pnrInput.value = "";
+    return;
+  }
+  const found = serialToPnr[sn];
+  if (found) {
+    pnrInput.value = found;
+    setStatus(`Match found: ${sn} → ${found}`, "ok");
+  } else {
+    pnrInput.value = "";
+    setStatus(`No match found in lookup for serial: ${sn}. You can type PN-R manually if needed.`, "warn");
+  }
+}
+
+
+function getExistingRackNames() {
+  return new Set(scans.map(x => normalize(x.rack)).filter(Boolean));
+}
+
+function addRack() {
+  const currentRack = normalize(rackInput.value);
+  const existing = getExistingRackNames();
+  let proposed = prompt("Enter new Rack Name / ID (must be unique):", "");
+  if (proposed === null) return;
+  proposed = normalize(proposed);
+  if (!proposed) {
+    setStatus("Rack name is required. Please enter a new Rack Name / ID.", "err");
+    rackInput.focus();
+    return;
+  }
+  if (proposed === currentRack || existing.has(proposed)) {
+    alert(`Rack name already exists: ${proposed}. Please use a new Rack Name / ID.`);
+    setStatus(`Duplicate rack name not allowed: ${proposed}`, "err");
+    rackInput.focus();
+    return;
+  }
+  rackInput.value = proposed;
+  setStatus(`New rack selected: ${proposed}`, "ok");
+  serialInput.focus();
+}
+
+function addEntry() {
+  const sn = normalize(serialInput.value);
+  let pnr = normalize(pnrInput.value);
+  const initials = normalize(initialsInput.value);
+  const rack = normalize(rackInput.value);
+  if (!initials) {
+    setStatus("Please enter your initials before scanning.", "err");
+    initialsInput.focus();
+    return;
+  }
+  if (!rack) {
+    setStatus("Please enter the rack before scanning.", "err");
+    rackInput.focus();
+    return;
+  }
+  if (!sn) {
+    setStatus("Please scan or enter a Serial Number first.", "err");
+    serialInput.focus();
+    return;
+  }
+
+  const existingScan = scans.find(x => x.serial === sn);
+  if (existingScan) {
+    playDuplicateSound();
+    setStatus(`Blocked duplicate: Serial ${sn} was already scanned in rack ${existingScan.rack || "(blank)"} at ${existingScan.ts || "(unknown time)"}.`, "err");
+    serialInput.select?.();
+    serialInput.focus();
+    return;
+  }
+
+  const lookedUpPnr = serialToPnr[sn] || "";
+  const lookupFound = !!lookedUpPnr;
+  if (!pnr && lookupFound) pnr = lookedUpPnr;
+
+  if (!pnr) {
+    alert(`No GPN / PN-R was found in the lookup for serial: ${sn}. Please scan the PN-R / GPN now.`);
+    setStatus(`No GPN found for serial ${sn}. Scan the PN-R / GPN in the PN-R field to continue.`, "err");
+    pnrInput.focus();
+    pnrInput.select?.();
+    return;
+  }
+
+  scans.push({
+    ts: nowStamp(),
+    serial: sn,
+    pnr,
+    initials,
+    rack,
+    lookupFound,
+    duplicate: false
+  });
+  persistScans();
+  renderAll();
+
+  setStatus(
+    lookupFound
+      ? `Added: ${sn} → ${pnr}`
+      : `Added without lookup match: ${sn} → ${pnr}`,
+    lookupFound ? "ok" : "warn"
+  );
+
+  cancelAutoSubmitTimer();
+  serialInput.value = "";
+  pnrInput.value = "";
+  serialInput.focus();
+}
+
+function undoLast() {
+  if (!scans.length) {
+    setStatus("Nothing to undo.", "warn");
+    return;
+  }
+  const removed = scans.pop();
+  persistScans();
+  renderAll();
+  setStatus(`Removed last entry: ${removed.serial} → ${removed.pnr}`, "warn");
+  serialInput.focus();
+}
+
+function clearAll() {
+  if (!confirm("Clear all scanned entries? This cannot be undone.")) return;
+  scans = [];
+  persistScans();
+  renderAll();
+  setStatus("All scanned entries cleared.", "warn");
+  serialInput.focus();
+}
+
+function persistScans() {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(scans));
+}
+
+function loadScans() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return [];
+    const arr = JSON.parse(raw);
+    return Array.isArray(arr) ? arr : [];
+  } catch (e) {
+    console.warn(e);
+    return [];
+  }
+}
+
+function loadLookupMap() {
+  try {
+    const raw = localStorage.getItem(LOOKUP_MAP_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    const cleaned = {};
+    Object.entries(parsed).forEach(([serial, pnr]) => {
+      const sn = normalize(serial);
+      const pn = normalize(pnr);
+      if (sn && pn) cleaned[sn] = pn;
+    });
+    return cleaned;
+  } catch {
+    return {};
+  }
+}
+
+function persistLookupMap() {
+  try {
+    localStorage.setItem(LOOKUP_MAP_KEY, JSON.stringify(serialToPnr));
+  } catch {}
+}
+
+function getSummaryRows() {
+  const counts = new Map();
+  for (const row of scans) {
+    const key = row.pnr || "(BLANK)";
+    counts.set(key, (counts.get(key)||0)+1);
+  }
+  return Array.from(counts.entries())
+    .sort((a,b)=> b[1]-a[1] || a[0].localeCompare(b[0]))
+    .map(([pnr,count])=>({pnr,count}));
+}
+
+function renderSummary() {
+  const rows = getSummaryRows();
+  summaryTbody.innerHTML = "";
+  if (!rows.length) {
+    summaryTbody.innerHTML = `<tr><td colspan="3" class="muted">No scans yet.</td></tr>`;
+    return;
+  }
+  rows.forEach((r, i) => {
+    const tr = document.createElement("tr");
+    tr.innerHTML = `
+      <td>${i+1}</td>
+      <td>${escapeHtml(r.pnr)}</td>
+      <td class="right">${r.count}</td>
+    `;
+    summaryTbody.appendChild(tr);
+  });
+}
+
+function renderDetails() {
+  if (!detailsTbody || !filterInput) return;
+  const q = normalize(filterInput.value);
+  detailsTbody.innerHTML = "";
+  let rows = scans;
+  if (q) {
+    rows = scans.filter(r => (r.serial+" "+r.pnr+" "+(r.initials||"")+" "+(r.rack||"")).includes(q));
+  }
+  if (!rows.length) {
+    detailsTbody.innerHTML = `<tr><td colspan="8" class="muted">${q ? "No matching scans." : "No scans yet."}</td></tr>`;
+    return;
+  }
+  rows.forEach((r, i) => {
+    const tr = document.createElement("tr");
+    if (r.duplicate) tr.classList.add("row-dup");
+    if (!r.lookupFound) tr.classList.add("row-notfound");
+    tr.innerHTML = `
+      <td>${i+1}</td>
+      <td>${escapeHtml(r.ts || "")}</td>
+      <td>${escapeHtml(r.serial || "")}</td>
+      <td>${escapeHtml(r.pnr || "")}</td>
+      <td>${escapeHtml(r.initials || "")}</td>
+      <td>${escapeHtml(r.rack || "")}</td>
+      <td>${r.lookupFound ? "Yes" : "No"}</td>
+      <td>${r.duplicate ? "Yes" : "No"}</td>
+    `;
+    detailsTbody.appendChild(tr);
+  });
+}
+
+function getRackGroups() {
+  const groups = new Map();
+  for (const r of scans) {
+    const rack = (r.rack || "(BLANK)").trim() || "(BLANK)";
+    if (!groups.has(rack)) groups.set(rack, []);
+    groups.get(rack).push(r);
+  }
+  return Array.from(groups.entries())
+    .map(([rack, rows]) => ({
+      rack,
+      rows,
+      total: rows.length,
+      uniqueSerials: new Set(rows.map(x => x.serial || "")).size,
+      uniquePnrs: new Set(rows.map(x => x.pnr || "")).size
+    }))
+    .sort((a,b)=> b.total-a.total || a.rack.localeCompare(b.rack));
+}
+
+function renderRacks() {
+  if (!racksTbody) return;
+  const groups = getRackGroups();
+  racksTbody.innerHTML = "";
+  if (!groups.length) {
+    racksTbody.innerHTML = `<tr><td colspan="6" class="muted">No racks scanned yet.</td></tr>`;
+    return;
+  }
+  groups.forEach((g, i) => {
+    const isOpen = expandedRacks.has(g.rack);
+    const tr = document.createElement("tr");
+    tr.className = "rack-row";
+    tr.dataset.rack = g.rack;
+    tr.innerHTML = `
+      <td>${i+1}</td>
+      <td><strong>${escapeHtml(g.rack)}</strong></td>
+      <td class="right">${g.total}</td>
+      <td class="right">${g.uniqueSerials}</td>
+      <td class="right">${g.uniquePnrs}</td>
+      <td>${isOpen ? "Hide" : "Show"}</td>
+    `;
+    racksTbody.appendChild(tr);
+
+    if (isOpen) {
+      const detailsRow = document.createElement("tr");
+      const serialRows = g.rows.slice().reverse().map((r, idx) => `
+        <tr>
+          <td>${idx+1}</td>
+          <td>${escapeHtml(r.ts || "")}</td>
+          <td>${escapeHtml(r.serial || "")}</td>
+          <td>${escapeHtml(r.pnr || "")}</td>
+          <td>${escapeHtml(r.initials || "")}</td>
+          <td>${r.duplicate ? "Yes" : "No"}</td>
+        </tr>`).join("");
+      detailsRow.innerHTML = `
+        <td colspan="6" class="rack-detail-cell">
+          <table class="rack-subtable">
+            <thead>
+              <tr>
+                <th style="width:50px;">#</th>
+                <th>Timestamp</th>
+                <th>Serial Number</th>
+                <th>PN-R</th>
+                <th>Initials</th>
+                <th style="width:90px;">Duplicate</th>
+              </tr>
+            </thead>
+            <tbody>${serialRows}</tbody>
+          </table>
+        </td>`;
+      racksTbody.appendChild(detailsRow);
+    }
+  });
+}
+
+function renderMetrics() {
+  totalScansEl.textContent = scans.length;
+  uniqueSerialsEl.textContent = new Set(scans.map(x=>x.serial)).size;
+  uniquePnrsEl.textContent = new Set(scans.map(x=>x.pnr)).size;
+  mapCountEl.textContent = Object.keys(serialToPnr).length.toLocaleString();
+}
+
+function renderAll() {
+  renderMetrics();
+  renderSummary();
+  renderDetails();
+  renderRacks();
+}
+
+function escapeHtml(s) {
+  return (s ?? "").toString()
+    .replace(/&/g,"&amp;")
+    .replace(/</g,"&lt;")
+    .replace(/>/g,"&gt;")
+    .replace(/"/g,"&quot;")
+    .replace(/'/g,"&#039;");
+}
+
+function xmlEscape(value) {
+  return (value ?? "").toString()
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
+
+function buildSpreadsheetMlWorkbook(sheets) {
+  const workbookStart = `<?xml version="1.0"?>
+<?mso-application progid="Excel.Sheet"?>
+<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet" xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet" xmlns:html="http://www.w3.org/TR/REC-html40">
+<Styles>
+  <Style ss:ID="Default" ss:Name="Normal">
+    <Alignment ss:Vertical="Bottom"/>
+    <Borders/>
+    <Font/>
+    <Interior/>
+    <NumberFormat/>
+    <Protection/>
+  </Style>
+  <Style ss:ID="Header">
+    <Font ss:Bold="1"/>
+    <Interior ss:Color="#D9EAF7" ss:Pattern="Solid"/>
+  </Style>
+</Styles>`;
+
+  const sheetXml = sheets.map(sheet => {
+    const rowsXml = sheet.rows.map((row, rowIndex) => {
+      const cellsXml = row.map(cell => {
+        const isNum = typeof cell === "number" && Number.isFinite(cell);
+        const type = isNum ? "Number" : "String";
+        const style = rowIndex === 0 ? ` ss:StyleID="Header"` : "";
+        return `<Cell${style}><Data ss:Type="${type}">${xmlEscape(cell)}</Data></Cell>`;
+      }).join("");
+      return `<Row>${cellsXml}</Row>`;
+    }).join("\n");
+    return `<Worksheet ss:Name="${xmlEscape((sheet.name || "Sheet").slice(0, 31))}"><Table>${rowsXml}</Table></Worksheet>`;
+  }).join("\n");
+
+  return `${workbookStart}\n${sheetXml}\n</Workbook>`;
+}
+
+function downloadFile(filename, content, type = "text/plain;charset=utf-8") {
+  const blob = new Blob([content], { type });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+function parseCsvLine(line) {
+  const out = [];
+  let cur = "";
+  let inQuotes = false;
+  for (let i = 0; i < line.length; i++) {
+    const ch = line[i];
+    if (ch === '"') {
+      if (inQuotes && line[i + 1] === '"') {
+        cur += '"';
+        i++;
+      } else {
+        inQuotes = !inQuotes;
+      }
+    } else if (ch === "," && !inQuotes) {
+      out.push(cur);
+      cur = "";
+    } else {
+      cur += ch;
+    }
+  }
+  out.push(cur);
+  return out;
+}
+
+function parseCsv(text) {
+  const rows = [];
+  let line = "";
+  let inQuotes = false;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === '"') {
+      if (inQuotes && text[i + 1] === '"') {
+        line += '""';
+        i++;
+      } else {
+        inQuotes = !inQuotes;
+        line += ch;
+      }
+    } else if ((ch === "\n" || ch === "\r") && !inQuotes) {
+      if (ch === "\r" && text[i + 1] === "\n") i++;
+      if (line.length) rows.push(parseCsvLine(line));
+      line = "";
+    } else {
+      line += ch;
+    }
+  }
+  if (line.length) rows.push(parseCsvLine(line));
+  return rows.filter(row => row.some(cell => String(cell || "").trim() !== ""));
+}
+
+function parseSpreadsheetMlRowsBySheet(xmlText) {
+  const parser = new DOMParser();
+  const xml = parser.parseFromString(xmlText, "application/xml");
+  if (xml.querySelector("parsererror")) throw new Error("Invalid SpreadsheetML XML.");
+  const ns = "urn:schemas-microsoft-com:office:spreadsheet";
+  const worksheets = Array.from(xml.getElementsByTagNameNS(ns, "Worksheet"));
+  const out = [];
+  worksheets.forEach(ws => {
+    const name = ws.getAttribute("ss:Name") || ws.getAttribute("Name") || "Sheet";
+    const rowNodes = Array.from(ws.getElementsByTagNameNS(ns, "Row"));
+    const rows = rowNodes.map(row => {
+      const values = [];
+      let currentIndex = 1;
+      const cells = Array.from(row.getElementsByTagNameNS(ns, "Cell"));
+      cells.forEach(cell => {
+        const idxAttr = cell.getAttribute("ss:Index") || cell.getAttribute("Index");
+        const targetIndex = idxAttr ? Number.parseInt(idxAttr, 10) : currentIndex;
+        while (currentIndex < targetIndex) {
+          values.push("");
+          currentIndex++;
+        }
+        const dataNode = cell.getElementsByTagNameNS(ns, "Data")[0];
+        values.push(dataNode ? (dataNode.textContent || "") : "");
+        currentIndex++;
+      });
+      return values;
+    });
+    out.push({ name, rows });
+  });
+  return out;
+}
+
+function parseLookupMapFromRows(rows) {
+  if (!rows.length) return { map: {}, pairCount: 0, skippedBlank: 0, conflicts: 0 };
+  const headerMap = {};
+  rows[0].forEach((h, i) => {
+    const key = normalizeImportHeader(h);
+    if (key) headerMap[key] = i;
+  });
+  const serialKeys = ["SERIALNUMBER", "SERIAL", "SN", "SERIALNO"];
+  const pnrKeys = ["PNR", "PNRGPN", "GPN", "PN", "PARTNUMBER", "PARTNO"];
+  const serialIdx = serialKeys.find(k => headerMap[k] != null) != null
+    ? headerMap[serialKeys.find(k => headerMap[k] != null)]
+    : 0;
+  const pnrIdx = pnrKeys.find(k => headerMap[k] != null) != null
+    ? headerMap[pnrKeys.find(k => headerMap[k] != null)]
+    : 1;
+  const hasHeader = serialKeys.some(k => headerMap[k] != null) || pnrKeys.some(k => headerMap[k] != null);
+  const start = hasHeader ? 1 : 0;
+
+  const map = {};
+  let pairCount = 0;
+  let skippedBlank = 0;
+  let conflicts = 0;
+  for (let i = start; i < rows.length; i++) {
+    const row = rows[i] || [];
+    const serial = normalize(row[serialIdx] ?? "");
+    const pnr = normalize(row[pnrIdx] ?? "");
+    if (!serial || !pnr) {
+      skippedBlank++;
+      continue;
+    }
+    if (map[serial] && map[serial] !== pnr) conflicts++;
+    map[serial] = pnr;
+    pairCount++;
+  }
+  return { map, pairCount, skippedBlank, conflicts };
+}
+
+function mergeLookupMaps(baseMap, incomingMap) {
+  let conflicts = 0;
+  Object.entries(incomingMap).forEach(([serial, pnr]) => {
+    if (baseMap[serial] && baseMap[serial] !== pnr) conflicts++;
+    baseMap[serial] = pnr;
+  });
+  return conflicts;
+}
+
+async function handleLookupFileUpload(file) {
+  if (!file) return;
+  const name = (file.name || "").toLowerCase();
+  try {
+    const text = (await file.text()).replace(/^﻿/, "");
+    let parsed = { map: {}, pairCount: 0, skippedBlank: 0, conflicts: 0 };
+    if (name.endsWith(".csv") || name.endsWith(".txt")) {
+      parsed = parseLookupMapFromRows(parseCsv(text));
+    } else if (name.endsWith(".xls") || name.endsWith(".xml")) {
+      const sheets = parseSpreadsheetMlRowsBySheet(text);
+      const aggregate = {};
+      let pairCount = 0;
+      let skippedBlank = 0;
+      let conflicts = 0;
+      sheets.forEach(sheet => {
+        const part = parseLookupMapFromRows(sheet.rows || []);
+        pairCount += part.pairCount;
+        skippedBlank += part.skippedBlank;
+        conflicts += part.conflicts;
+        conflicts += mergeLookupMaps(aggregate, part.map);
+      });
+      parsed = { map: aggregate, pairCount, skippedBlank, conflicts };
+    } else {
+      setStatus("Unsupported lookup file. Use CSV/TXT or SpreadsheetML XLS/XML.", "err");
+      return;
+    }
+
+    const entryCount = Object.keys(parsed.map).length;
+    if (!entryCount) {
+      setStatus("Lookup upload failed. No Serial → PN-R mappings were found.", "err");
+      return;
+    }
+
+    serialToPnr = parsed.map;
+    persistLookupMap();
+    renderMetrics();
+    autoFillPNR();
+    setStatus(`Lookup file loaded: ${entryCount} mappings (${parsed.conflicts} conflicts overwritten, ${parsed.skippedBlank} blank rows skipped).`, "ok");
+  } catch (e) {
+    console.error(e);
+    setStatus("Lookup upload failed. File could not be parsed.", "err");
+  } finally {
+    if (lookupFileInput) lookupFileInput.value = "";
+  }
+}
+
+function clearLookupMap() {
+  serialToPnr = {};
+  persistLookupMap();
+  renderMetrics();
+  autoFillPNR();
+  setStatus("Lookup map cleared. PN-R auto-fill now requires a loaded lookup file.", "warn");
+}
+
+function normalizeImportHeader(value) {
+  return normalize(value).replace(/[^A-Z0-9]+/g, "");
+}
+
+function parseRecordsFromRows(rows) {
+  if (!rows.length) return { records: [], skippedBlank: 0 };
+  const headerMap = {};
+  rows[0].forEach((h, i) => {
+    const key = normalizeImportHeader(h);
+    if (key) headerMap[key] = i;
+  });
+  const get = (row, keys) => {
+    for (const key of keys) {
+      if (headerMap[key] != null) return row[headerMap[key]] ?? "";
+    }
+    return "";
+  };
+
+  const serialKeys = ["SERIALNUMBER", "SERIAL", "SN"];
+  const pnrKeys = ["PNR", "PNRGPN", "GPN", "PN"];
+  const initialsKeys = ["INITIALS", "USERINITIALS", "OPERATOR", "TECHNICIAN"];
+  const rackKeys = ["RACK", "RACKID", "RACKNAME"];
+  const tsKeys = ["TIMESTAMP", "TIME", "DATE", "DATETIME"];
+  const lookupKeys = ["LOOKUPFOUND", "LOOKUP", "FOUNDINLOOKUP"];
+  const duplicateKeys = ["DUPLICATE", "ISDUPLICATE"];
+
+  if (!serialKeys.some(k => headerMap[k] != null)) return { records: [], skippedBlank: rows.length > 1 ? rows.length - 1 : 0 };
+
+  let skippedBlank = 0;
+  const records = [];
+  for (let i = 1; i < rows.length; i++) {
+    const row = rows[i];
+    const serial = normalize(get(row, serialKeys));
+    if (!serial) {
+      skippedBlank++;
+      continue;
+    }
+    const rawLookup = normalize(get(row, lookupKeys));
+    const rawDup = normalize(get(row, duplicateKeys));
+    records.push({
+      ts: (get(row, tsKeys) || "").toString().trim() || nowStamp(),
+      serial,
+      pnr: normalize(get(row, pnrKeys)),
+      initials: normalize(get(row, initialsKeys)),
+      rack: normalize(get(row, rackKeys)),
+      lookupFound: rawLookup === "YES" || rawLookup === "TRUE" || rawLookup === "1",
+      duplicate: rawDup === "YES" || rawDup === "TRUE" || rawDup === "1"
+    });
+  }
+  return { records, skippedBlank };
+}
+
+function mergeImportedRecords(records, skippedBlank = 0) {
+  const bySerial = new Map(scans.map(row => [normalize(row.serial), row]));
+  let added = 0;
+  let updated = 0;
+  let skippedDupes = 0;
+
+  records.forEach(record => {
+    const key = normalize(record.serial);
+    if (!key) return;
+    const existing = bySerial.get(key);
+    if (!existing) {
+      const lookedUp = normalize(serialToPnr[key] || "");
+      scans.push({
+        ts: record.ts || nowStamp(),
+        serial: key,
+        pnr: record.pnr || lookedUp,
+        initials: record.initials || "",
+        rack: record.rack || "",
+        lookupFound: record.lookupFound || !!lookedUp,
+        duplicate: !!record.duplicate
+      });
+      bySerial.set(key, scans[scans.length - 1]);
+      added++;
+      return;
+    }
+
+    let changed = false;
+    if (!existing.pnr && record.pnr) { existing.pnr = record.pnr; changed = true; }
+    if (!existing.initials && record.initials) { existing.initials = record.initials; changed = true; }
+    if (!existing.rack && record.rack) { existing.rack = record.rack; changed = true; }
+    if (!existing.ts && record.ts) { existing.ts = record.ts; changed = true; }
+    if (record.lookupFound && !existing.lookupFound) { existing.lookupFound = true; changed = true; }
+    if (record.duplicate && !existing.duplicate) { existing.duplicate = true; changed = true; }
+    if (changed) updated++;
+    else skippedDupes++;
+  });
+
+  persistScans();
+  renderAll();
+  setStatus(`Merge complete. Added ${added}, updated ${updated}, skipped ${skippedDupes} duplicates, skipped ${skippedBlank} blank row(s).`, (added || updated) ? "ok" : "warn");
+}
+
+function exportDataWorkbook() {
+  const summaryRows = [["PN-R", "Count"], ...getSummaryRows().map(r => [r.pnr, r.count])];
+  const rackRows = [["Rack","Timestamp","Serial Number","PN-R","Initials","Duplicate","Lookup Found"]];
+  getRackGroups().forEach(group => {
+    group.rows.slice().reverse().forEach((r, idx) => {
+      rackRows.push([
+        idx === 0 ? group.rack : "",
+        r.ts || "",
+        r.serial || "",
+        r.pnr || "",
+        r.initials || "",
+        r.duplicate ? "Yes" : "No",
+        r.lookupFound ? "Yes" : "No"
+      ]);
+    });
+  });
+  if (rackRows.length === 1) rackRows.push(["(No racks scanned)","","","","","",""]);
+
+  const workbook = buildSpreadsheetMlWorkbook([
+    { name: "Summary By PN-R", rows: summaryRows },
+    { name: "Racks", rows: rackRows }
+  ]);
+  downloadFile(`inventory_merge_${Date.now()}.xls`, workbook, "application/vnd.ms-excel;charset=utf-8");
+  setStatus("Exported merge workbook (.xls) with Summary and Racks sheets.", "ok");
+}
+
+async function handleImportMergeFile(file) {
+  if (!file) return;
+  try {
+    const text = (await file.text()).replace(/^﻿/, "");
+    const sheets = parseSpreadsheetMlRowsBySheet(text);
+    if (!sheets.length) {
+      setStatus("Import failed. No sheets found in the selected file.", "err");
+      return;
+    }
+    let target = sheets.find(s => /merge data/i.test(s.name));
+    if (!target) target = sheets.find(s => /racks|exported scans/i.test(s.name));
+    if (!target) target = sheets[0];
+    const { records, skippedBlank } = parseRecordsFromRows(target.rows || []);
+    if (!records.length) {
+      setStatus("Import failed. No readable scan rows were found in the file.", "err");
+      return;
+    }
+    mergeImportedRecords(records, skippedBlank);
+  } catch (e) {
+    console.error(e);
+    setStatus(`Import failed. ${(e && e.message) ? e.message : "The file could not be read."}`, "err");
+  } finally {
+    if (importMergeFileInput) importMergeFileInput.value = "";
+  }
+}
+
+let autoSubmitTimer = null;
+function cancelAutoSubmitTimer() {
+  if (autoSubmitTimer) {
+    clearTimeout(autoSubmitTimer);
+    autoSubmitTimer = null;
+  }
+}
+
+function scheduleAutoSubmit(source = "serial") {
+  cancelAutoSubmitTimer();
+  if (!isAutoSubmitEnabled()) return;
+
+  const sn = normalize(serialInput.value);
+  if (!sn) return;
+
+  autoSubmitTimer = setTimeout(() => {
+    autoSubmitTimer = null;
+    const stillSn = normalize(serialInput.value);
+    const stillPnr = normalize(pnrInput.value);
+    if (!stillSn) return;
+
+    const existingScan = scans.find(x => x.serial === stillSn);
+    if (existingScan) {
+      playDuplicateSound();
+      setStatus(`Duplicate detected (not submitted): Serial ${stillSn} already exists in rack ${existingScan.rack || "(blank)"} at ${existingScan.ts || "(unknown time)"}.`, "err");
+      serialInput.select?.();
+      serialInput.focus();
+      return;
+    }
+
+    const lookedUpPnr = serialToPnr[stillSn] || "";
+    if (source === "serial") {
+      autoFillPNR();
+      if (!lookedUpPnr) return;
+    }
+
+    if (!stillPnr && !lookedUpPnr) return;
+
+    addEntry();
+  }, 450);
+}
+
+serialInput.addEventListener("input", () => {
+  autoFillPNR();
+  scheduleAutoSubmit("serial");
+});
+serialInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    autoFillPNR();
+    addEntry();
+  }
+});
+
+pnrInput.addEventListener("input", () => {
+  if (!isAutoSubmitEnabled()) return;
+  const sn = normalize(serialInput.value);
+  const manualPnr = normalize(pnrInput.value);
+  if (!sn || !manualPnr) return;
+  if (serialToPnr[sn]) return;
+  scheduleAutoSubmit("pnr");
+});
+
+pnrInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    addEntry();
+  }
+});
+
+initialsInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    serialInput.focus();
+  }
+});
+
+rackInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    serialInput.focus();
+  }
+});
+
+addRackBtn.addEventListener("click", addRack);
+addBtn.addEventListener("click", addEntry);
+undoBtn.addEventListener("click", undoLast);
+clearBtn.addEventListener("click", clearAll);
+if (loadLookupBtn && lookupFileInput) {
+  loadLookupBtn.addEventListener("click", () => lookupFileInput.click());
+  lookupFileInput.addEventListener("change", (e) => handleLookupFileUpload(e.target.files?.[0] || null));
+}
+if (clearLookupBtn) clearLookupBtn.addEventListener("click", clearLookupMap);
+if (exportDataBtn) exportDataBtn.addEventListener("click", exportDataWorkbook);
+if (importMergeBtn && importMergeFileInput) {
+  importMergeBtn.addEventListener("click", () => importMergeFileInput.click());
+  importMergeFileInput.addEventListener("change", (e) => handleImportMergeFile(e.target.files?.[0] || null));
+}
+if (filterInput) filterInput.addEventListener("input", renderDetails);
+
+if (racksTbody) {
+  racksTbody.addEventListener("click", (e) => {
+    const row = e.target.closest("tr.rack-row");
+    if (!row) return;
+    const rack = row.dataset.rack || "";
+    if (!rack) return;
+    if (expandedRacks.has(rack)) expandedRacks.delete(rack);
+    else expandedRacks.add(rack);
+    renderRacks();
+  });
+}
+
+document.querySelectorAll(".tab-btn").forEach(btn => {
+  btn.addEventListener("click", () => {
+    document.querySelectorAll(".tab-btn").forEach(b=>b.classList.remove("active"));
+    btn.classList.add("active");
+    document.querySelectorAll(".tab-panel").forEach(p=>p.classList.add("hidden"));
+    document.getElementById(btn.dataset.tab).classList.remove("hidden");
+  });
+});
+
+initializeAutoSubmitToggle();
+mapCountEl.textContent = Object.keys(serialToPnr).length.toLocaleString();
+renderAll();
+serialInput.focus();
+</script>
+</body>
+</html>
