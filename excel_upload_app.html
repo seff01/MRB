@@ -114,6 +114,18 @@
   .rack-subtable th, .rack-subtable td { border:1px solid var(--line); padding:6px 8px; font-size:12px; }
   .rack-subtable th { color: var(--muted); text-align:left; background:#0b1220; }
   .rack-detail-cell { background: rgba(11,18,32,.55); padding:8px; }
+  .explorer-pallet-row, .explorer-box-row { cursor:pointer; }
+  .explorer-pallet-row:hover, .explorer-box-row:hover { background: rgba(59,130,246,.08); }
+  .explorer-detail-cell { background: rgba(11,18,32,.55); padding:8px; }
+  .qr-thumb {
+    width: 64px;
+    height: 64px;
+    border: 1px solid var(--line);
+    border-radius: 8px;
+    background: #fff;
+    padding: 4px;
+    object-fit: contain;
+  }
 
   @media (max-width: 900px) {
     .toolbar { grid-template-columns: 1fr; }
@@ -129,6 +141,7 @@
     <div class="tabs">
       <button class="tab-btn" data-tab="summaryTab">Summary by PN-R</button>
       <button class="tab-btn active" data-tab="racksTab">Pallets</button>
+      <button class="tab-btn" data-tab="explorerTab">Pallet Explorer</button>
     </div>
 
     <div class="toolbar">
@@ -230,6 +243,24 @@
       </div>
     </div>
 
+    <div id="explorerTab" class="tab-panel hidden">
+      <div class="table-wrap">
+        <table id="explorerTable">
+          <thead>
+            <tr>
+              <th style="width:50px;">#</th>
+              <th>Pallet ID</th>
+              <th style="width:90px;">QR</th>
+              <th class="right" style="width:140px;">Unique Box IDs</th>
+              <th class="right" style="width:140px;">Unique SNs</th>
+              <th style="width:110px;">Action</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </div>
+
   </div>
 </div>
 
@@ -243,6 +274,7 @@ const AUTO_SUBMIT_KEY = "inventory_count_auto_submit_enabled_v1";
 const PALLET_COUNTER_KEY = "inventory_pallet_counter_v1";
 const ACTIVE_PALLET_ID_KEY = "inventory_active_pallet_id_v1";
 const ACTIVE_PALLET_GPN_LOCK_KEY = "inventory_active_pallet_gpn_lock_v1";
+const PALLET_REGISTRY_KEY = "inventory_pallet_registry_v1";
 
 const serialInput = document.getElementById("serialInput");
 const pnrInput = document.getElementById("pnrInput");
@@ -273,18 +305,24 @@ const downloadPalletQrLink = document.getElementById("downloadPalletQrLink");
 const summaryTbody = document.querySelector("#summaryTable tbody");
 const detailsTbody = document.querySelector("#detailsTable tbody");
 const racksTbody = document.querySelector("#racksTable tbody");
+const explorerTbody = document.querySelector("#explorerTable tbody");
 const filterInput = document.getElementById("filterInput");
 
 let scans = loadScans();
 let serialToPnr = loadLookupMap();
 let serialToBoxId = loadLookupBoxMap();
 let palletCounters = loadPalletCounters();
+let palletRegistry = loadPalletRegistry();
 let currentPalletId = normalize(rackInput?.value || "");
 let currentPalletGpnLock = "";
 const expandedPallets = new Set();
+const expandedExplorerPallets = new Set();
+const expandedExplorerBoxes = new Set();
+const palletQrCache = new Map();
 const savedPalletState = loadActivePalletState();
 if (savedPalletState.id) currentPalletId = savedPalletState.id;
 if (savedPalletState.lock) currentPalletGpnLock = savedPalletState.lock;
+syncPalletRegistryFromScans();
 
 function loadAutoSubmitEnabled() {
   try {
@@ -388,6 +426,52 @@ function persistPalletCounters() {
   } catch {}
 }
 
+function loadPalletRegistry() {
+  try {
+    const raw = localStorage.getItem(PALLET_REGISTRY_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    const deduped = new Set();
+    parsed.forEach(value => {
+      const id = normalize(value);
+      if (id) deduped.add(id);
+    });
+    return Array.from(deduped);
+  } catch {
+    return [];
+  }
+}
+
+function persistPalletRegistry() {
+  try {
+    localStorage.setItem(PALLET_REGISTRY_KEY, JSON.stringify(palletRegistry));
+  } catch {}
+}
+
+function registerPalletId(palletId) {
+  const normalized = normalize(palletId);
+  if (!normalized) return;
+  if (palletRegistry.includes(normalized)) return;
+  palletRegistry.push(normalized);
+  palletRegistry.sort((a, b) => b.localeCompare(a));
+  persistPalletRegistry();
+}
+
+function syncPalletRegistryFromScans() {
+  let changed = false;
+  scans.forEach(row => {
+    const id = normalize(row.palletId || row.rack);
+    if (!id || palletRegistry.includes(id)) return;
+    palletRegistry.push(id);
+    changed = true;
+  });
+  if (changed) {
+    palletRegistry.sort((a, b) => b.localeCompare(a));
+    persistPalletRegistry();
+  }
+}
+
 function persistActivePalletState() {
   try {
     if (currentPalletId) localStorage.setItem(ACTIVE_PALLET_ID_KEY, currentPalletId);
@@ -429,6 +513,7 @@ function generatePalletId(initials) {
 function setActivePallet(palletId, lockGpn = "") {
   currentPalletId = normalize(palletId);
   currentPalletGpnLock = normalize(lockGpn);
+  if (currentPalletId) registerPalletId(currentPalletId);
   if (rackInput) rackInput.value = currentPalletId;
   if (activePalletIdEl) activePalletIdEl.textContent = currentPalletId || "-";
   if (activePalletLockEl) activePalletLockEl.textContent = currentPalletGpnLock || "-";
@@ -458,6 +543,7 @@ function startNewPallet() {
   }
   const palletId = generatePalletId(initials);
   setActivePallet(palletId, "");
+  renderPalletQr({ silent: true, palletId });
   setStatus(`New pallet started: ${palletId}. Pallet will lock to the first PN-R/GPN scanned.`, "ok");
   serialInput.focus();
 }
@@ -478,28 +564,41 @@ function buildPalletQrDataUrl(palletId) {
   );
 }
 
-async function renderPalletQr() {
-  if (!currentPalletId) {
-    setStatus("Start a pallet before generating a QR code.", "warn");
+async function getPalletQrUrl(palletId) {
+  const normalized = normalize(palletId);
+  if (!normalized) return "";
+  if (palletQrCache.has(normalized)) return palletQrCache.get(normalized);
+  const url = await buildPalletQrDataUrl(normalized);
+  palletQrCache.set(normalized, url);
+  return url;
+}
+
+async function renderPalletQr(options = {}) {
+  const silent = !!options.silent;
+  const targetPalletId = normalize(options.palletId || currentPalletId);
+  if (!targetPalletId) {
+    if (!silent) setStatus("Start a pallet before generating a QR code.", "warn");
     return;
   }
   try {
-    const dataUrl = await buildPalletQrDataUrl(currentPalletId);
+    const dataUrl = await getPalletQrUrl(targetPalletId);
     if (palletQrImage) palletQrImage.src = dataUrl;
     if (downloadPalletQrLink) {
       downloadPalletQrLink.href = dataUrl;
-      downloadPalletQrLink.download = `${currentPalletId}_QR.png`;
+      downloadPalletQrLink.download = `${targetPalletId}_QR.png`;
     }
     palletQrWrap?.classList.remove("hidden");
-    setStatus(
-      window.QRCode && window.QRCode.toDataURL
-        ? `QR code generated for pallet ${currentPalletId}.`
-        : `QR code generated via fallback service for pallet ${currentPalletId}.`,
-      "ok"
-    );
+    if (!silent) {
+      setStatus(
+        window.QRCode && window.QRCode.toDataURL
+          ? `QR code generated for pallet ${targetPalletId}.`
+          : `QR code generated via fallback service for pallet ${targetPalletId}.`,
+        "ok"
+      );
+    }
   } catch (e) {
     console.error(e);
-    setStatus("Failed to generate pallet QR code.", "err");
+    if (!silent) setStatus("Failed to generate pallet QR code.", "err");
   }
 }
 
@@ -767,6 +866,10 @@ function renderDetails() {
 
 function getPalletGroups() {
   const groups = new Map();
+  palletRegistry.forEach(id => {
+    if (!groups.has(id)) groups.set(id, []);
+  });
+  if (currentPalletId && !groups.has(currentPalletId)) groups.set(currentPalletId, []);
   for (const r of scans) {
     const palletId = normalize(r.palletId || r.rack) || "(BLANK)";
     if (!groups.has(palletId)) groups.set(palletId, []);
@@ -778,7 +881,8 @@ function getPalletGroups() {
       rows,
       total: rows.length,
       uniqueSerials: new Set(rows.map(x => x.serial || "")).size,
-      uniquePnrs: new Set(rows.map(x => x.pnr || "")).size
+      uniquePnrs: new Set(rows.map(x => x.pnr || "")).size,
+      uniqueBoxes: new Set(rows.map(x => normalize(x.l10BoxId || "")).filter(Boolean)).size
     }))
     .sort((a,b)=> b.total-a.total || a.palletId.localeCompare(b.palletId));
 }
@@ -840,6 +944,105 @@ function renderPallets() {
   });
 }
 
+function getPalletExplorerData() {
+  return getPalletGroups().map(group => {
+    const boxToSerials = new Map();
+    group.rows.forEach(row => {
+      const boxId = normalize(row.l10BoxId || "") || "(NO BOX ID)";
+      if (!boxToSerials.has(boxId)) boxToSerials.set(boxId, new Set());
+      const sn = normalize(row.serial || "");
+      if (sn) boxToSerials.get(boxId).add(sn);
+    });
+    const boxes = Array.from(boxToSerials.entries())
+      .map(([boxId, serials]) => ({ boxId, serials: Array.from(serials).sort() }))
+      .sort((a, b) => b.serials.length - a.serials.length || a.boxId.localeCompare(b.boxId));
+    return {
+      ...group,
+      boxes
+    };
+  });
+}
+
+async function renderPalletExplorer() {
+  if (!explorerTbody) return;
+  const pallets = getPalletExplorerData();
+  explorerTbody.innerHTML = "";
+  if (!pallets.length) {
+    explorerTbody.innerHTML = `<tr><td colspan="6" class="muted">No pallets scanned yet.</td></tr>`;
+    return;
+  }
+
+  for (let i = 0; i < pallets.length; i++) {
+    const pallet = pallets[i];
+    const isOpen = expandedExplorerPallets.has(pallet.palletId);
+    let qrSrc = "";
+    try {
+      qrSrc = await getPalletQrUrl(pallet.palletId);
+    } catch {}
+
+    const row = document.createElement("tr");
+    row.className = "explorer-pallet-row";
+    row.dataset.palletId = pallet.palletId;
+    row.innerHTML = `
+      <td>${i+1}</td>
+      <td><strong>${escapeHtml(pallet.palletId)}</strong></td>
+      <td>${qrSrc ? `<img class="qr-thumb" src="${qrSrc}" alt="QR ${escapeHtml(pallet.palletId)}" />` : '<span class="muted">N/A</span>'}</td>
+      <td class="right">${pallet.uniqueBoxes}</td>
+      <td class="right">${pallet.uniqueSerials}</td>
+      <td>${isOpen ? "Hide" : "Show"}</td>
+    `;
+    explorerTbody.appendChild(row);
+
+    if (!isOpen) continue;
+
+    const detailsRow = document.createElement("tr");
+    const boxRows = pallet.boxes.map((box, index) => {
+      const boxKey = `${pallet.palletId}::${box.boxId}`;
+      const boxOpen = expandedExplorerBoxes.has(boxKey);
+      const snList = box.serials.map((sn, snIdx) => `<tr><td>${snIdx + 1}</td><td>${escapeHtml(sn)}</td></tr>`).join("");
+      const snTable = boxOpen
+        ? `
+          <tr>
+            <td colspan="4" class="explorer-detail-cell">
+              <table class="rack-subtable">
+                <thead>
+                  <tr><th style="width:60px;">#</th><th>Serial Number</th></tr>
+                </thead>
+                <tbody>${snList || '<tr><td colspan="2" class="muted">No serials.</td></tr>'}</tbody>
+              </table>
+            </td>
+          </tr>`
+        : "";
+      return `
+        <tr class="explorer-box-row" data-box-key="${escapeHtml(boxKey)}">
+          <td style="width:60px;">${index + 1}</td>
+          <td><strong>${escapeHtml(box.boxId)}</strong></td>
+          <td class="right" style="width:120px;">${box.serials.length}</td>
+          <td style="width:110px;">${boxOpen ? "Hide SNs" : "Show SNs"}</td>
+        </tr>
+        ${snTable}
+      `;
+    }).join("");
+
+    detailsRow.innerHTML = `
+      <td colspan="6" class="explorer-detail-cell">
+        <table class="rack-subtable">
+          <thead>
+            <tr>
+              <th style="width:60px;">#</th>
+              <th>L10 Box ID</th>
+              <th class="right" style="width:120px;">Unique SNs</th>
+              <th style="width:110px;">Action</th>
+            </tr>
+          </thead>
+          <tbody>${boxRows || '<tr><td colspan="4" class="muted">No box IDs.</td></tr>'}</tbody>
+        </table>
+      </td>
+    `;
+    explorerTbody.appendChild(detailsRow);
+  }
+}
+
 function renderMetrics() {
   totalScansEl.textContent = scans.length;
   uniqueSerialsEl.textContent = new Set(scans.map(x=>x.serial)).size;
@@ -852,6 +1055,7 @@ function renderAll() {
   renderSummary();
   renderDetails();
   renderPallets();
+  renderPalletExplorer();
 }
 
 function escapeHtml(s) {
@@ -1448,6 +1652,26 @@ if (racksTbody) {
     if (expandedPallets.has(palletId)) expandedPallets.delete(palletId);
     else expandedPallets.add(palletId);
     renderPallets();
+  });
+}
+
+if (explorerTbody) {
+  explorerTbody.addEventListener("click", (e) => {
+    const boxRow = e.target.closest("tr.explorer-box-row");
+    if (boxRow?.dataset?.boxKey) {
+      const boxKey = boxRow.dataset.boxKey;
+      if (expandedExplorerBoxes.has(boxKey)) expandedExplorerBoxes.delete(boxKey);
+      else expandedExplorerBoxes.add(boxKey);
+      renderPalletExplorer();
+      return;
+    }
+
+    const palletRow = e.target.closest("tr.explorer-pallet-row");
+    if (!palletRow?.dataset?.palletId) return;
+    const palletId = palletRow.dataset.palletId;
+    if (expandedExplorerPallets.has(palletId)) expandedExplorerPallets.delete(palletId);
+    else expandedExplorerPallets.add(palletId);
+    renderPalletExplorer();
   });
 }
 
