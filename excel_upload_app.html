@@ -162,6 +162,7 @@
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <script>
 const LOOKUP_MAP_KEY = "inventory_lookup_map_v1";
+const LOOKUP_BOX_MAP_KEY = "inventory_lookup_box_map_v1";
 const STORAGE_KEY = "inventory_count_scans_v1";
 const AUTO_SUBMIT_KEY = "inventory_count_auto_submit_enabled_v1";
 
@@ -192,6 +193,7 @@ const filterInput = document.getElementById("filterInput");
 
 let scans = loadScans();
 let serialToPnr = loadLookupMap();
+let serialToBoxId = loadLookupBoxMap();
 const expandedRacks = new Set();
 
 function loadAutoSubmitEnabled() {
@@ -261,6 +263,15 @@ function playDuplicateSound() {
 
 function normalize(v) {
   return (v ?? "").toString().trim().toUpperCase();
+}
+
+function formatBoxIdDisplay(value) {
+  const raw = normalize(value);
+  if (!raw) return "";
+  if (raw.startsWith("BOX - ")) return raw;
+  if (raw.startsWith("BOX-")) return `BOX - ${raw.slice(4).trim()}`;
+  if (raw.startsWith("BOX")) return `BOX - ${raw.slice(3).replace(/^[-\s]+/, "").trim()}`;
+  return `BOX - ${raw}`;
 }
 
 function initializeAutoSubmitToggle() {
@@ -356,6 +367,7 @@ function addEntry() {
   }
 
   const lookedUpPnr = serialToPnr[sn] || "";
+  const lookedUpBoxId = serialToBoxId[sn] || "";
   const lookupFound = !!lookedUpPnr;
   if (!pnr && lookupFound) pnr = lookedUpPnr;
 
@@ -370,6 +382,7 @@ function addEntry() {
   scans.push({
     ts: nowStamp(),
     serial: sn,
+    l10BoxId: lookedUpBoxId,
     pnr,
     initials,
     rack,
@@ -381,7 +394,7 @@ function addEntry() {
 
   setStatus(
     lookupFound
-      ? `Added: ${sn} → ${pnr}`
+      ? `Added: ${sn} → ${pnr}${lookedUpBoxId ? ` (${lookedUpBoxId})` : ""}`
       : `Added without lookup match: ${sn} → ${pnr}`,
     lookupFound ? "ok" : "warn"
   );
@@ -447,9 +460,28 @@ function loadLookupMap() {
   }
 }
 
+function loadLookupBoxMap() {
+  try {
+    const raw = localStorage.getItem(LOOKUP_BOX_MAP_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    const cleaned = {};
+    Object.entries(parsed).forEach(([serial, boxId]) => {
+      const sn = normalize(serial);
+      const bx = formatBoxIdDisplay(boxId);
+      if (sn && bx) cleaned[sn] = bx;
+    });
+    return cleaned;
+  } catch {
+    return {};
+  }
+}
+
 function persistLookupMap() {
   try {
     localStorage.setItem(LOOKUP_MAP_KEY, JSON.stringify(serialToPnr));
+    localStorage.setItem(LOOKUP_BOX_MAP_KEY, JSON.stringify(serialToBoxId));
   } catch {}
 }
 
@@ -560,6 +592,7 @@ function renderRacks() {
           <td>${idx+1}</td>
           <td>${escapeHtml(r.ts || "")}</td>
           <td>${escapeHtml(r.serial || "")}</td>
+          <td>${escapeHtml(r.l10BoxId || "")}</td>
           <td>${escapeHtml(r.pnr || "")}</td>
           <td>${escapeHtml(r.initials || "")}</td>
           <td>${r.duplicate ? "Yes" : "No"}</td>
@@ -572,6 +605,7 @@ function renderRacks() {
                 <th style="width:50px;">#</th>
                 <th>Timestamp</th>
                 <th>Serial Number</th>
+                <th>L10 Box ID</th>
                 <th>PN-R</th>
                 <th>Initials</th>
                 <th style="width:90px;">Duplicate</th>
@@ -589,7 +623,7 @@ function renderMetrics() {
   totalScansEl.textContent = scans.length;
   uniqueSerialsEl.textContent = new Set(scans.map(x=>x.serial)).size;
   uniquePnrsEl.textContent = new Set(scans.map(x=>x.pnr)).size;
-  mapCountEl.textContent = Object.keys(serialToPnr).length.toLocaleString();
+  mapCountEl.textContent = Math.max(Object.keys(serialToPnr).length, Object.keys(serialToBoxId).length).toLocaleString();
 }
 
 function renderAll() {
@@ -779,7 +813,17 @@ async function parseWorkbookRowsBySheet(file) {
 }
 
 function parseLookupMapFromRows(rows) {
-  if (!rows.length) return { map: {}, pairCount: 0, skippedBlank: 0, conflicts: 0 };
+  if (!rows.length) {
+    return {
+      pnrMap: {},
+      boxMap: {},
+      pnrCount: 0,
+      boxCount: 0,
+      skippedBlank: 0,
+      pnrConflicts: 0,
+      boxConflicts: 0
+    };
+  }
   const headerMap = {};
   rows[0].forEach((h, i) => {
     const key = normalizeImportHeader(h);
@@ -787,32 +831,50 @@ function parseLookupMapFromRows(rows) {
   });
   const serialKeys = ["SERIALNUMBER", "SERIAL", "SN", "SERIALNO"];
   const pnrKeys = ["PNR", "PNRGPN", "GPN", "PN", "PARTNUMBER", "PARTNO"];
+  const boxKeys = ["L10BOXID", "BOXNUMBER", "BOXID", "BOXNO", "BOX"];
+  const firstRowWidth = (rows[0] || []).length;
+  const likelyMrbLayout = firstRowWidth >= 5;
   const serialIdx = serialKeys.find(k => headerMap[k] != null) != null
     ? headerMap[serialKeys.find(k => headerMap[k] != null)]
-    : 0;
+    : (likelyMrbLayout ? 4 : 0);
   const pnrIdx = pnrKeys.find(k => headerMap[k] != null) != null
     ? headerMap[pnrKeys.find(k => headerMap[k] != null)]
-    : 1;
-  const hasHeader = serialKeys.some(k => headerMap[k] != null) || pnrKeys.some(k => headerMap[k] != null);
+    : (likelyMrbLayout ? 3 : 1);
+  const boxIdx = boxKeys.find(k => headerMap[k] != null) != null
+    ? headerMap[boxKeys.find(k => headerMap[k] != null)]
+    : (likelyMrbLayout ? 0 : null);
+  const hasHeader = serialKeys.some(k => headerMap[k] != null) || pnrKeys.some(k => headerMap[k] != null) || boxKeys.some(k => headerMap[k] != null);
   const start = hasHeader ? 1 : 0;
 
-  const map = {};
-  let pairCount = 0;
+  const pnrMap = {};
+  const boxMap = {};
+  let pnrCount = 0;
+  let boxCount = 0;
   let skippedBlank = 0;
-  let conflicts = 0;
+  let pnrConflicts = 0;
+  let boxConflicts = 0;
   for (let i = start; i < rows.length; i++) {
     const row = rows[i] || [];
     const serial = normalize(row[serialIdx] ?? "");
-    const pnr = normalize(row[pnrIdx] ?? "");
-    if (!serial || !pnr) {
+    if (!serial) {
       skippedBlank++;
       continue;
     }
-    if (map[serial] && map[serial] !== pnr) conflicts++;
-    map[serial] = pnr;
-    pairCount++;
+    const pnr = normalize(row[pnrIdx] ?? "");
+    const rawBox = boxIdx == null ? "" : normalize(row[boxIdx] ?? "");
+    const boxId = formatBoxIdDisplay(rawBox);
+    if (pnr) {
+      if (pnrMap[serial] && pnrMap[serial] !== pnr) pnrConflicts++;
+      pnrMap[serial] = pnr;
+      pnrCount++;
+    }
+    if (boxId) {
+      if (boxMap[serial] && boxMap[serial] !== boxId) boxConflicts++;
+      boxMap[serial] = boxId;
+      boxCount++;
+    }
   }
-  return { map, pairCount, skippedBlank, conflicts };
+  return { pnrMap, boxMap, pnrCount, boxCount, skippedBlank, pnrConflicts, boxConflicts };
 }
 
 function mergeLookupMaps(baseMap, incomingMap) {
@@ -828,31 +890,43 @@ async function handleLookupFileUpload(file) {
   if (!file) return;
   try {
     const sheets = await parseWorkbookRowsBySheet(file);
-    let parsed = { map: {}, pairCount: 0, skippedBlank: 0, conflicts: 0 };
-    const aggregate = {};
-    let pairCount = 0;
+    let parsed = { pnrMap: {}, boxMap: {}, pnrCount: 0, boxCount: 0, skippedBlank: 0, pnrConflicts: 0, boxConflicts: 0 };
+    const aggregatePnr = {};
+    const aggregateBox = {};
+    let pnrCount = 0;
+    let boxCount = 0;
     let skippedBlank = 0;
-    let conflicts = 0;
+    let pnrConflicts = 0;
+    let boxConflicts = 0;
     sheets.forEach(sheet => {
       const part = parseLookupMapFromRows(sheet.rows || []);
-      pairCount += part.pairCount;
+      pnrCount += part.pnrCount;
+      boxCount += part.boxCount;
       skippedBlank += part.skippedBlank;
-      conflicts += part.conflicts;
-      conflicts += mergeLookupMaps(aggregate, part.map);
+      pnrConflicts += part.pnrConflicts;
+      boxConflicts += part.boxConflicts;
+      pnrConflicts += mergeLookupMaps(aggregatePnr, part.pnrMap);
+      boxConflicts += mergeLookupMaps(aggregateBox, part.boxMap);
     });
-    parsed = { map: aggregate, pairCount, skippedBlank, conflicts };
+    parsed = { pnrMap: aggregatePnr, boxMap: aggregateBox, pnrCount, boxCount, skippedBlank, pnrConflicts, boxConflicts };
 
-    const entryCount = Object.keys(parsed.map).length;
+    const pnrEntryCount = Object.keys(parsed.pnrMap).length;
+    const boxEntryCount = Object.keys(parsed.boxMap).length;
+    const entryCount = Math.max(pnrEntryCount, boxEntryCount);
     if (!entryCount) {
-      setStatus("Lookup upload failed. No Serial → PN-R mappings were found.", "err");
+      setStatus("Lookup upload failed. No Serial → PN-R / Box mappings were found.", "err");
       return;
     }
 
-    serialToPnr = parsed.map;
+    serialToPnr = parsed.pnrMap;
+    serialToBoxId = parsed.boxMap;
     persistLookupMap();
     renderMetrics();
     autoFillPNR();
-    setStatus(`Lookup file loaded: ${entryCount} mappings (${parsed.conflicts} conflicts overwritten, ${parsed.skippedBlank} blank rows skipped).`, "ok");
+    setStatus(
+      `Lookup file loaded: PN-R ${pnrEntryCount}, L10 Box ID ${boxEntryCount} (${parsed.pnrConflicts + parsed.boxConflicts} conflicts overwritten, ${parsed.skippedBlank} blank rows skipped).`,
+      "ok"
+    );
   } catch (e) {
     console.error(e);
     setStatus("Lookup upload failed. File could not be parsed.", "err");
@@ -863,10 +937,11 @@ async function handleLookupFileUpload(file) {
 
 function clearLookupMap() {
   serialToPnr = {};
+  serialToBoxId = {};
   persistLookupMap();
   renderMetrics();
   autoFillPNR();
-  setStatus("Lookup map cleared. PN-R auto-fill now requires a loaded lookup file.", "warn");
+  setStatus("Lookup map cleared. PN-R and L10 Box ID auto-fill now require a loaded lookup file.", "warn");
 }
 
 function normalizeImportHeader(value) {
@@ -891,6 +966,7 @@ function parseRecordsFromRows(rows) {
   const pnrKeys = ["PNR", "PNRGPN", "GPN", "PN"];
   const initialsKeys = ["INITIALS", "USERINITIALS", "OPERATOR", "TECHNICIAN"];
   const rackKeys = ["RACK", "RACKID", "RACKNAME"];
+  const boxIdKeys = ["L10BOXID", "BOXID", "BOXNUMBER", "L10BOX", "BOX"];
   const tsKeys = ["TIMESTAMP", "TIME", "DATE", "DATETIME"];
   const lookupKeys = ["LOOKUPFOUND", "LOOKUP", "FOUNDINLOOKUP"];
   const duplicateKeys = ["DUPLICATE", "ISDUPLICATE"];
@@ -911,6 +987,7 @@ function parseRecordsFromRows(rows) {
     records.push({
       ts: (get(row, tsKeys) || "").toString().trim() || nowStamp(),
       serial,
+      l10BoxId: formatBoxIdDisplay(get(row, boxIdKeys)),
       pnr: normalize(get(row, pnrKeys)),
       initials: normalize(get(row, initialsKeys)),
       rack: normalize(get(row, rackKeys)),
@@ -933,9 +1010,11 @@ function mergeImportedRecords(records, skippedBlank = 0) {
     const existing = bySerial.get(key);
     if (!existing) {
       const lookedUp = normalize(serialToPnr[key] || "");
+      const lookedUpBox = serialToBoxId[key] || "";
       scans.push({
         ts: record.ts || nowStamp(),
         serial: key,
+        l10BoxId: record.l10BoxId || lookedUpBox,
         pnr: record.pnr || lookedUp,
         initials: record.initials || "",
         rack: record.rack || "",
@@ -948,6 +1027,10 @@ function mergeImportedRecords(records, skippedBlank = 0) {
     }
 
     let changed = false;
+    if (!existing.l10BoxId && (record.l10BoxId || serialToBoxId[key])) {
+      existing.l10BoxId = record.l10BoxId || serialToBoxId[key];
+      changed = true;
+    }
     if (!existing.pnr && record.pnr) { existing.pnr = record.pnr; changed = true; }
     if (!existing.initials && record.initials) { existing.initials = record.initials; changed = true; }
     if (!existing.rack && record.rack) { existing.rack = record.rack; changed = true; }
@@ -965,13 +1048,14 @@ function mergeImportedRecords(records, skippedBlank = 0) {
 
 function exportDataWorkbook() {
   const summaryRows = [["PN-R", "Count"], ...getSummaryRows().map(r => [r.pnr, r.count])];
-  const rackRows = [["Rack","Timestamp","Serial Number","PN-R","Initials","Duplicate","Lookup Found"]];
+  const rackRows = [["Rack","Timestamp","Serial Number","L10 Box ID","PN-R","Initials","Duplicate","Lookup Found"]];
   getRackGroups().forEach(group => {
     group.rows.slice().reverse().forEach((r, idx) => {
       rackRows.push([
         idx === 0 ? group.rack : "",
         r.ts || "",
         r.serial || "",
+        r.l10BoxId || "",
         r.pnr || "",
         r.initials || "",
         r.duplicate ? "Yes" : "No",
@@ -979,7 +1063,7 @@ function exportDataWorkbook() {
       ]);
     });
   });
-  if (rackRows.length === 1) rackRows.push(["(No racks scanned)","","","","","",""]);
+  if (rackRows.length === 1) rackRows.push(["(No racks scanned)","","","","","","",""]);
 
   if (typeof XLSX !== "undefined") {
     const wb = XLSX.utils.book_new();
@@ -1146,7 +1230,7 @@ document.querySelectorAll(".tab-btn").forEach(btn => {
 });
 
 initializeAutoSubmitToggle();
-mapCountEl.textContent = Object.keys(serialToPnr).length.toLocaleString();
+mapCountEl.textContent = Math.max(Object.keys(serialToPnr).length, Object.keys(serialToBoxId).length).toLocaleString();
 renderAll();
 serialInput.focus();
 </script>
