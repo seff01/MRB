@@ -69,7 +69,6 @@
 <div class="wrap">
   <div class="card">
     <h1>Inventory Count Scanner</h1>
-    <div class="sub">Scan Serial Number in the first field. PN-R auto-fills from your Excel mapping, and each pallet is locked to one PN-R/GPN. Pallet IDs are auto-generated from initials + date + sequence.</div>
 
     <div class="tabs">
       <button class="tab-btn" data-tab="summaryTab">Summary by PN-R</button>
@@ -78,23 +77,23 @@
 
     <div class="toolbar">
       <div class="field">
-        <label for="serialInput">Serial Number (scan here)</label>
-        <input id="serialInput" autocomplete="off" placeholder="Scan or type Serial Number" />
+        <label for="serialInput">Serial Number</label>
+        <input id="serialInput" autocomplete="off" />
       </div>
       <div class="field">
-        <label for="pnrInput">PN-R / GPN (auto-filled)</label>
-        <input id="pnrInput" autocomplete="off" placeholder="PN-R will auto-fill from Serial Number" />
+        <label for="pnrInput">PN-R / GPN</label>
+        <input id="pnrInput" autocomplete="off" />
       </div>
       <div class="field">
         <label for="initialsInput">Initials</label>
-        <input id="initialsInput" autocomplete="off" placeholder="e.g. JQ" maxlength="8" />
+        <input id="initialsInput" autocomplete="off" maxlength="8" />
       </div>
       <div class="field">
         <label for="rackInput">Active Pallet ID</label>
-        <input id="rackInput" autocomplete="off" placeholder="Generated pallet ID" maxlength="24" readonly />
+        <input id="rackInput" autocomplete="off" maxlength="24" readonly />
       </div>
       <div class="field">
-        <label for="autoSubmitToggle">Auto Submit Mode</label>
+        <label for="autoSubmitToggle">Auto Submit</label>
         <label style="display:flex;align-items:center;gap:10px;min-height:44px;padding:0 12px;border:1px solid var(--border);border-radius:12px;background:rgba(255,255,255,.03);cursor:pointer;user-select:none;">
           <input id="autoSubmitToggle" type="checkbox" checked />
           <span>Enable auto submit</span>
@@ -110,7 +109,7 @@
       <button id="clearLookupBtn">Clear Lookup</button>
     </div>
 
-    <div id="statusMsg" class="status muted">Ready.</div>
+    <div id="statusMsg" class="status muted"></div>
 
     <div class="metrics">
       <div class="pill">Active Pallet: <strong id="activePalletId">-</strong></div>
