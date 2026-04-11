@@ -69,11 +69,11 @@
 <div class="wrap">
   <div class="card">
     <h1>Inventory Count Scanner</h1>
-    <div class="sub">Scan Serial Number in the first field. PN-R auto-fills from your Excel mapping (Column A → Column B). Auto Submit can be turned on or off, and when it is on the entry will also submit automatically after a required PN-R / GPN scan.</div>
+    <div class="sub">Scan Serial Number in the first field. PN-R auto-fills from your Excel mapping, and each pallet is locked to one PN-R/GPN. Pallet IDs are auto-generated from initials + date + sequence.</div>
 
     <div class="tabs">
       <button class="tab-btn" data-tab="summaryTab">Summary by PN-R</button>
-      <button class="tab-btn active" data-tab="racksTab">Racks</button>
+      <button class="tab-btn active" data-tab="racksTab">Pallets</button>
     </div>
 
     <div class="toolbar">
@@ -90,8 +90,8 @@
         <input id="initialsInput" autocomplete="off" placeholder="e.g. JQ" maxlength="8" />
       </div>
       <div class="field">
-        <label for="rackInput">Rack</label>
-        <input id="rackInput" autocomplete="off" placeholder="e.g. RACK-A1" maxlength="20" />
+        <label for="rackInput">Active Pallet ID</label>
+        <input id="rackInput" autocomplete="off" placeholder="Generated pallet ID" maxlength="24" readonly />
       </div>
       <div class="field">
         <label for="autoSubmitToggle">Auto Submit Mode</label>
@@ -100,7 +100,8 @@
           <span>Enable auto submit</span>
         </label>
       </div>
-      <button id="addRackBtn" class="secondary">Add Rack</button>
+      <button id="addRackBtn" class="secondary">Start New Pallet</button>
+      <button id="generateQrBtn" class="secondary">Generate Pallet QR</button>
       <button id="addBtn" class="primary">Add Entry</button>
       <button id="undoBtn">Undo Last</button>
       <button id="clearBtn" class="danger">Clear All</button>
@@ -110,6 +111,18 @@
     </div>
 
     <div id="statusMsg" class="status muted">Ready.</div>
+
+    <div class="metrics">
+      <div class="pill">Active Pallet: <strong id="activePalletId">-</strong></div>
+      <div class="pill">Pallet GPN Lock: <strong id="activePalletLock">-</strong></div>
+    </div>
+
+    <div id="palletQrWrap" class="hidden" style="margin-bottom:12px;">
+      <img id="palletQrImage" alt="Pallet QR Code" style="width:220px;height:220px;border:1px solid var(--line);border-radius:8px;background:#fff;padding:8px;" />
+      <div style="margin-top:8px;">
+        <a id="downloadPalletQrLink" href="#" download="pallet_qr.png" style="color:#93c5fd;">Download Pallet QR</a>
+      </div>
+    </div>
 
     <div class="metrics">
       <div class="pill">Total Scans: <strong id="totalScans">0</strong></div>
@@ -144,7 +157,7 @@
           <thead>
             <tr>
               <th style="width:50px;">#</th>
-              <th>Rack</th>
+              <th>Pallet ID</th>
               <th class="right" style="width:120px;">Total Scans</th>
               <th class="right" style="width:140px;">Unique Serials</th>
               <th class="right" style="width:120px;">Unique PN-R</th>
@@ -160,11 +173,15 @@
 </div>
 
 <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.4/build/qrcode.min.js"></script>
 <script>
 const LOOKUP_MAP_KEY = "inventory_lookup_map_v1";
 const LOOKUP_BOX_MAP_KEY = "inventory_lookup_box_map_v1";
 const STORAGE_KEY = "inventory_count_scans_v1";
 const AUTO_SUBMIT_KEY = "inventory_count_auto_submit_enabled_v1";
+const PALLET_COUNTER_KEY = "inventory_pallet_counter_v1";
+const ACTIVE_PALLET_ID_KEY = "inventory_active_pallet_id_v1";
+const ACTIVE_PALLET_GPN_LOCK_KEY = "inventory_active_pallet_gpn_lock_v1";
 
 const serialInput = document.getElementById("serialInput");
 const pnrInput = document.getElementById("pnrInput");
@@ -172,6 +189,7 @@ const initialsInput = document.getElementById("initialsInput");
 const rackInput = document.getElementById("rackInput");
 const autoSubmitToggle = document.getElementById("autoSubmitToggle");
 const addRackBtn = document.getElementById("addRackBtn");
+const generateQrBtn = document.getElementById("generateQrBtn");
 const addBtn = document.getElementById("addBtn");
 const undoBtn = document.getElementById("undoBtn");
 const clearBtn = document.getElementById("clearBtn");
@@ -186,6 +204,11 @@ const totalScansEl = document.getElementById("totalScans");
 const uniqueSerialsEl = document.getElementById("uniqueSerials");
 const uniquePnrsEl = document.getElementById("uniquePnrs");
 const mapCountEl = document.getElementById("mapCount");
+const activePalletIdEl = document.getElementById("activePalletId");
+const activePalletLockEl = document.getElementById("activePalletLock");
+const palletQrWrap = document.getElementById("palletQrWrap");
+const palletQrImage = document.getElementById("palletQrImage");
+const downloadPalletQrLink = document.getElementById("downloadPalletQrLink");
 const summaryTbody = document.querySelector("#summaryTable tbody");
 const detailsTbody = document.querySelector("#detailsTable tbody");
 const racksTbody = document.querySelector("#racksTable tbody");
@@ -194,7 +217,13 @@ const filterInput = document.getElementById("filterInput");
 let scans = loadScans();
 let serialToPnr = loadLookupMap();
 let serialToBoxId = loadLookupBoxMap();
-const expandedRacks = new Set();
+let palletCounters = loadPalletCounters();
+let currentPalletId = normalize(rackInput?.value || "");
+let currentPalletGpnLock = "";
+const expandedPallets = new Set();
+const savedPalletState = loadActivePalletState();
+if (savedPalletState.id) currentPalletId = savedPalletState.id;
+if (savedPalletState.lock) currentPalletGpnLock = savedPalletState.lock;
 
 function loadAutoSubmitEnabled() {
   try {
@@ -274,6 +303,135 @@ function formatBoxIdDisplay(value) {
   return `BOX - ${raw}`;
 }
 
+function loadPalletCounters() {
+  try {
+    const raw = localStorage.getItem(PALLET_COUNTER_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    const cleaned = {};
+    Object.entries(parsed).forEach(([key, value]) => {
+      const n = Number.parseInt(value, 10);
+      if (!Number.isFinite(n) || n < 0) return;
+      cleaned[key] = n;
+    });
+    return cleaned;
+  } catch {
+    return {};
+  }
+}
+
+function persistPalletCounters() {
+  try {
+    localStorage.setItem(PALLET_COUNTER_KEY, JSON.stringify(palletCounters));
+  } catch {}
+}
+
+function persistActivePalletState() {
+  try {
+    if (currentPalletId) localStorage.setItem(ACTIVE_PALLET_ID_KEY, currentPalletId);
+    else localStorage.removeItem(ACTIVE_PALLET_ID_KEY);
+    if (currentPalletGpnLock) localStorage.setItem(ACTIVE_PALLET_GPN_LOCK_KEY, currentPalletGpnLock);
+    else localStorage.removeItem(ACTIVE_PALLET_GPN_LOCK_KEY);
+  } catch {}
+}
+
+function loadActivePalletState() {
+  try {
+    const id = normalize(localStorage.getItem(ACTIVE_PALLET_ID_KEY) || "");
+    const lock = normalize(localStorage.getItem(ACTIVE_PALLET_GPN_LOCK_KEY) || "");
+    return { id, lock };
+  } catch {
+    return { id: "", lock: "" };
+  }
+}
+
+function buildPalletSequenceKey(initials, dateStamp) {
+  return `${initials}|${dateStamp}`;
+}
+
+function padPalletSequence(seq) {
+  return String(seq).padStart(4, "0");
+}
+
+function generatePalletId(initials) {
+  const d = new Date();
+  const pad = n => String(n).padStart(2, "0");
+  const dateStamp = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}`;
+  const key = buildPalletSequenceKey(initials, dateStamp);
+  const next = (palletCounters[key] || 0) + 1;
+  palletCounters[key] = next;
+  persistPalletCounters();
+  return `${initials}-${dateStamp}-${padPalletSequence(next)}`;
+}
+
+function setActivePallet(palletId, lockGpn = "") {
+  currentPalletId = normalize(palletId);
+  currentPalletGpnLock = normalize(lockGpn);
+  if (rackInput) rackInput.value = currentPalletId;
+  if (activePalletIdEl) activePalletIdEl.textContent = currentPalletId || "-";
+  if (activePalletLockEl) activePalletLockEl.textContent = currentPalletGpnLock || "-";
+  persistActivePalletState();
+}
+
+function syncActivePalletLockFromScans() {
+  if (!currentPalletId) {
+    currentPalletGpnLock = "";
+    return;
+  }
+  const lockSource = scans.find(row => normalize(row.palletId || row.rack) === currentPalletId && normalize(row.pnr));
+  currentPalletGpnLock = normalize(lockSource?.pnr || "");
+}
+
+function updateActivePalletState() {
+  syncActivePalletLockFromScans();
+  setActivePallet(currentPalletId, currentPalletGpnLock);
+}
+
+function startNewPallet() {
+  const initials = normalize(initialsInput.value);
+  if (!initials) {
+    setStatus("Enter initials first, then start a new pallet.", "err");
+    initialsInput.focus();
+    return;
+  }
+  const palletId = generatePalletId(initials);
+  setActivePallet(palletId, "");
+  setStatus(`New pallet started: ${palletId}. Pallet will lock to the first PN-R/GPN scanned.`, "ok");
+  serialInput.focus();
+}
+
+function buildPalletQrDataUrl(palletId) {
+  if (!window.QRCode || !window.QRCode.toDataURL) throw new Error("QR library unavailable.");
+  return new Promise((resolve, reject) => {
+    window.QRCode.toDataURL(
+      palletId,
+      { width: 280, margin: 1, errorCorrectionLevel: "M", color: { dark: "#000000", light: "#FFFFFF" } },
+      (err, url) => (err ? reject(err) : resolve(url))
+    );
+  });
+}
+
+async function renderPalletQr() {
+  if (!currentPalletId) {
+    setStatus("Start a pallet before generating a QR code.", "warn");
+    return;
+  }
+  try {
+    const dataUrl = await buildPalletQrDataUrl(currentPalletId);
+    if (palletQrImage) palletQrImage.src = dataUrl;
+    if (downloadPalletQrLink) {
+      downloadPalletQrLink.href = dataUrl;
+      downloadPalletQrLink.download = `${currentPalletId}_QR.png`;
+    }
+    palletQrWrap?.classList.remove("hidden");
+    setStatus(`QR code generated for pallet ${currentPalletId}.`, "ok");
+  } catch (e) {
+    console.error(e);
+    setStatus("Failed to generate pallet QR code.", "err");
+  }
+}
+
 function initializeAutoSubmitToggle() {
   if (!autoSubmitToggle) return;
   autoSubmitToggle.checked = loadAutoSubmitEnabled();
@@ -310,45 +468,19 @@ function autoFillPNR() {
 }
 
 
-function getExistingRackNames() {
-  return new Set(scans.map(x => normalize(x.rack)).filter(Boolean));
-}
-
-function addRack() {
-  const currentRack = normalize(rackInput.value);
-  const existing = getExistingRackNames();
-  let proposed = prompt("Enter new Rack Name / ID (must be unique):", "");
-  if (proposed === null) return;
-  proposed = normalize(proposed);
-  if (!proposed) {
-    setStatus("Rack name is required. Please enter a new Rack Name / ID.", "err");
-    rackInput.focus();
-    return;
-  }
-  if (proposed === currentRack || existing.has(proposed)) {
-    alert(`Rack name already exists: ${proposed}. Please use a new Rack Name / ID.`);
-    setStatus(`Duplicate rack name not allowed: ${proposed}`, "err");
-    rackInput.focus();
-    return;
-  }
-  rackInput.value = proposed;
-  setStatus(`New rack selected: ${proposed}`, "ok");
-  serialInput.focus();
-}
-
 function addEntry() {
   const sn = normalize(serialInput.value);
   let pnr = normalize(pnrInput.value);
   const initials = normalize(initialsInput.value);
-  const rack = normalize(rackInput.value);
+  const palletId = normalize(currentPalletId);
   if (!initials) {
     setStatus("Please enter your initials before scanning.", "err");
     initialsInput.focus();
     return;
   }
-  if (!rack) {
-    setStatus("Please enter the rack before scanning.", "err");
-    rackInput.focus();
+  if (!palletId) {
+    setStatus("Start a new pallet before scanning.", "err");
+    addRackBtn.focus();
     return;
   }
   if (!sn) {
@@ -360,7 +492,7 @@ function addEntry() {
   const existingScan = scans.find(x => x.serial === sn);
   if (existingScan) {
     playDuplicateSound();
-    setStatus(`Blocked duplicate: Serial ${sn} was already scanned in rack ${existingScan.rack || "(blank)"} at ${existingScan.ts || "(unknown time)"}.`, "err");
+    setStatus(`Blocked duplicate: Serial ${sn} was already scanned in pallet ${existingScan.palletId || existingScan.rack || "(blank)"} at ${existingScan.ts || "(unknown time)"}.`, "err");
     serialInput.select?.();
     serialInput.focus();
     return;
@@ -379,22 +511,38 @@ function addEntry() {
     return;
   }
 
+  if (currentPalletGpnLock && pnr !== currentPalletGpnLock) {
+    setStatus(
+      `Pallet lock active: ${palletId} is locked to PN-R/GPN ${currentPalletGpnLock}. Start a new pallet for ${pnr}.`,
+      "err"
+    );
+    pnrInput.focus();
+    pnrInput.select?.();
+    return;
+  }
+
+  if (!currentPalletGpnLock) {
+    currentPalletGpnLock = pnr;
+    persistActivePalletState();
+  }
+
   scans.push({
     ts: nowStamp(),
     serial: sn,
     l10BoxId: lookedUpBoxId,
     pnr,
     initials,
-    rack,
+    rack: palletId,
     lookupFound,
     duplicate: false
   });
   persistScans();
+  updateActivePalletState();
   renderAll();
 
   setStatus(
     lookupFound
-      ? `Added: ${sn} → ${pnr}${lookedUpBoxId ? ` (${lookedUpBoxId})` : ""}`
+      ? `Added to ${palletId}: ${sn} → ${pnr}${lookedUpBoxId ? ` (${lookedUpBoxId})` : ""}`
       : `Added without lookup match: ${sn} → ${pnr}`,
     lookupFound ? "ok" : "warn"
   );
@@ -412,6 +560,7 @@ function undoLast() {
   }
   const removed = scans.pop();
   persistScans();
+  updateActivePalletState();
   renderAll();
   setStatus(`Removed last entry: ${removed.serial} → ${removed.pnr}`, "warn");
   serialInput.focus();
@@ -421,6 +570,7 @@ function clearAll() {
   if (!confirm("Clear all scanned entries? This cannot be undone.")) return;
   scans = [];
   persistScans();
+  updateActivePalletState();
   renderAll();
   setStatus("All scanned entries cleared.", "warn");
   serialInput.focus();
@@ -520,7 +670,7 @@ function renderDetails() {
   detailsTbody.innerHTML = "";
   let rows = scans;
   if (q) {
-    rows = scans.filter(r => (r.serial+" "+r.pnr+" "+(r.initials||"")+" "+(r.rack||"")).includes(q));
+    rows = scans.filter(r => (r.serial+" "+r.pnr+" "+(r.initials||"")+" "+(r.palletId || r.rack || "")).includes(q));
   }
   if (!rows.length) {
     detailsTbody.innerHTML = `<tr><td colspan="8" class="muted">${q ? "No matching scans." : "No scans yet."}</td></tr>`;
@@ -536,7 +686,7 @@ function renderDetails() {
       <td>${escapeHtml(r.serial || "")}</td>
       <td>${escapeHtml(r.pnr || "")}</td>
       <td>${escapeHtml(r.initials || "")}</td>
-      <td>${escapeHtml(r.rack || "")}</td>
+      <td>${escapeHtml(r.palletId || r.rack || "")}</td>
       <td>${r.lookupFound ? "Yes" : "No"}</td>
       <td>${r.duplicate ? "Yes" : "No"}</td>
     `;
@@ -544,40 +694,40 @@ function renderDetails() {
   });
 }
 
-function getRackGroups() {
+function getPalletGroups() {
   const groups = new Map();
   for (const r of scans) {
-    const rack = (r.rack || "(BLANK)").trim() || "(BLANK)";
-    if (!groups.has(rack)) groups.set(rack, []);
-    groups.get(rack).push(r);
+    const palletId = normalize(r.palletId || r.rack) || "(BLANK)";
+    if (!groups.has(palletId)) groups.set(palletId, []);
+    groups.get(palletId).push(r);
   }
   return Array.from(groups.entries())
-    .map(([rack, rows]) => ({
-      rack,
+    .map(([palletId, rows]) => ({
+      palletId,
       rows,
       total: rows.length,
       uniqueSerials: new Set(rows.map(x => x.serial || "")).size,
       uniquePnrs: new Set(rows.map(x => x.pnr || "")).size
     }))
-    .sort((a,b)=> b.total-a.total || a.rack.localeCompare(b.rack));
+    .sort((a,b)=> b.total-a.total || a.palletId.localeCompare(b.palletId));
 }
 
-function renderRacks() {
+function renderPallets() {
   if (!racksTbody) return;
-  const groups = getRackGroups();
+  const groups = getPalletGroups();
   racksTbody.innerHTML = "";
   if (!groups.length) {
-    racksTbody.innerHTML = `<tr><td colspan="6" class="muted">No racks scanned yet.</td></tr>`;
+    racksTbody.innerHTML = `<tr><td colspan="6" class="muted">No pallets scanned yet.</td></tr>`;
     return;
   }
   groups.forEach((g, i) => {
-    const isOpen = expandedRacks.has(g.rack);
+    const isOpen = expandedPallets.has(g.palletId);
     const tr = document.createElement("tr");
     tr.className = "rack-row";
-    tr.dataset.rack = g.rack;
+    tr.dataset.rack = g.palletId;
     tr.innerHTML = `
       <td>${i+1}</td>
-      <td><strong>${escapeHtml(g.rack)}</strong></td>
+      <td><strong>${escapeHtml(g.palletId)}</strong></td>
       <td class="right">${g.total}</td>
       <td class="right">${g.uniqueSerials}</td>
       <td class="right">${g.uniquePnrs}</td>
@@ -630,7 +780,7 @@ function renderAll() {
   renderMetrics();
   renderSummary();
   renderDetails();
-  renderRacks();
+  renderPallets();
 }
 
 function escapeHtml(s) {
@@ -965,7 +1115,7 @@ function parseRecordsFromRows(rows) {
   const serialKeys = ["SERIALNUMBER", "SERIAL", "SN"];
   const pnrKeys = ["PNR", "PNRGPN", "GPN", "PN"];
   const initialsKeys = ["INITIALS", "USERINITIALS", "OPERATOR", "TECHNICIAN"];
-  const rackKeys = ["RACK", "RACKID", "RACKNAME"];
+  const rackKeys = ["PALLETID", "PALLET", "RACK", "RACKID", "RACKNAME"];
   const boxIdKeys = ["L10BOXID", "BOXID", "BOXNUMBER", "L10BOX", "BOX"];
   const tsKeys = ["TIMESTAMP", "TIME", "DATE", "DATETIME"];
   const lookupKeys = ["LOOKUPFOUND", "LOOKUP", "FOUNDINLOOKUP"];
@@ -984,13 +1134,15 @@ function parseRecordsFromRows(rows) {
     }
     const rawLookup = normalize(get(row, lookupKeys));
     const rawDup = normalize(get(row, duplicateKeys));
+    const palletId = normalize(get(row, rackKeys));
     records.push({
       ts: (get(row, tsKeys) || "").toString().trim() || nowStamp(),
       serial,
       l10BoxId: formatBoxIdDisplay(get(row, boxIdKeys)),
       pnr: normalize(get(row, pnrKeys)),
       initials: normalize(get(row, initialsKeys)),
-      rack: normalize(get(row, rackKeys)),
+      palletId,
+      rack: palletId,
       lookupFound: rawLookup === "YES" || rawLookup === "TRUE" || rawLookup === "1",
       duplicate: rawDup === "YES" || rawDup === "TRUE" || rawDup === "1"
     });
@@ -1011,13 +1163,15 @@ function mergeImportedRecords(records, skippedBlank = 0) {
     if (!existing) {
       const lookedUp = normalize(serialToPnr[key] || "");
       const lookedUpBox = serialToBoxId[key] || "";
+      const palletId = normalize(record.palletId || record.rack);
       scans.push({
         ts: record.ts || nowStamp(),
         serial: key,
         l10BoxId: record.l10BoxId || lookedUpBox,
         pnr: record.pnr || lookedUp,
         initials: record.initials || "",
-        rack: record.rack || "",
+        palletId,
+        rack: palletId,
         lookupFound: record.lookupFound || !!lookedUp,
         duplicate: !!record.duplicate
       });
@@ -1033,7 +1187,12 @@ function mergeImportedRecords(records, skippedBlank = 0) {
     }
     if (!existing.pnr && record.pnr) { existing.pnr = record.pnr; changed = true; }
     if (!existing.initials && record.initials) { existing.initials = record.initials; changed = true; }
-    if (!existing.rack && record.rack) { existing.rack = record.rack; changed = true; }
+    const incomingPalletId = normalize(record.palletId || record.rack);
+    if ((!existing.palletId && !existing.rack) && incomingPalletId) {
+      existing.palletId = incomingPalletId;
+      existing.rack = incomingPalletId;
+      changed = true;
+    }
     if (!existing.ts && record.ts) { existing.ts = record.ts; changed = true; }
     if (record.lookupFound && !existing.lookupFound) { existing.lookupFound = true; changed = true; }
     if (record.duplicate && !existing.duplicate) { existing.duplicate = true; changed = true; }
@@ -1048,11 +1207,11 @@ function mergeImportedRecords(records, skippedBlank = 0) {
 
 function exportDataWorkbook() {
   const summaryRows = [["PN-R", "Count"], ...getSummaryRows().map(r => [r.pnr, r.count])];
-  const rackRows = [["Rack","Timestamp","Serial Number","L10 Box ID","PN-R","Initials","Duplicate","Lookup Found"]];
-  getRackGroups().forEach(group => {
+  const rackRows = [["Pallet ID","Timestamp","Serial Number","L10 Box ID","PN-R","Initials","Duplicate","Lookup Found"]];
+  getPalletGroups().forEach(group => {
     group.rows.slice().reverse().forEach((r, idx) => {
       rackRows.push([
-        idx === 0 ? group.rack : "",
+        idx === 0 ? group.palletId : "",
         r.ts || "",
         r.serial || "",
         r.l10BoxId || "",
@@ -1063,24 +1222,24 @@ function exportDataWorkbook() {
       ]);
     });
   });
-  if (rackRows.length === 1) rackRows.push(["(No racks scanned)","","","","","","",""]);
+  if (rackRows.length === 1) rackRows.push(["(No pallets scanned)","","","","","","",""]);
 
   if (typeof XLSX !== "undefined") {
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(summaryRows), "Summary By PN-R");
-    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rackRows), "Racks");
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet(rackRows), "Pallets");
     const wbArray = XLSX.write(wb, { bookType: "xlsx", type: "array" });
     downloadFile(`inventory_merge_${Date.now()}.xlsx`, wbArray, "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
-    setStatus("Exported merge workbook (.xlsx) with Summary and Racks sheets.", "ok");
+    setStatus("Exported merge workbook (.xlsx) with Summary and Pallets sheets.", "ok");
     return;
   }
 
   const workbook = buildSpreadsheetMlWorkbook([
     { name: "Summary By PN-R", rows: summaryRows },
-    { name: "Racks", rows: rackRows }
+    { name: "Pallets", rows: rackRows }
   ]);
   downloadFile(`inventory_merge_${Date.now()}.xls`, workbook, "application/vnd.ms-excel;charset=utf-8");
-  setStatus("Exported merge workbook (.xls) with Summary and Racks sheets.", "ok");
+  setStatus("Exported merge workbook (.xls) with Summary and Pallets sheets.", "ok");
 }
 
 async function handleImportMergeFile(file) {
@@ -1092,7 +1251,7 @@ async function handleImportMergeFile(file) {
       return;
     }
     let target = sheets.find(s => /merge data/i.test(s.name));
-    if (!target) target = sheets.find(s => /racks|exported scans/i.test(s.name));
+    if (!target) target = sheets.find(s => /pallets|racks|exported scans/i.test(s.name));
     if (!target) target = sheets[0];
     const { records, skippedBlank } = parseRecordsFromRows(target.rows || []);
     if (!records.length) {
@@ -1132,7 +1291,7 @@ function scheduleAutoSubmit(source = "serial") {
     const existingScan = scans.find(x => x.serial === stillSn);
     if (existingScan) {
       playDuplicateSound();
-      setStatus(`Duplicate detected (not submitted): Serial ${stillSn} already exists in rack ${existingScan.rack || "(blank)"} at ${existingScan.ts || "(unknown time)"}.`, "err");
+      setStatus(`Duplicate detected (not submitted): Serial ${stillSn} already exists in pallet ${existingScan.palletId || existingScan.rack || "(blank)"} at ${existingScan.ts || "(unknown time)"}.`, "err");
       serialInput.select?.();
       serialInput.focus();
       return;
@@ -1192,7 +1351,8 @@ rackInput.addEventListener("keydown", (e) => {
   }
 });
 
-addRackBtn.addEventListener("click", addRack);
+addRackBtn.addEventListener("click", startNewPallet);
+if (generateQrBtn) generateQrBtn.addEventListener("click", renderPalletQr);
 addBtn.addEventListener("click", addEntry);
 undoBtn.addEventListener("click", undoLast);
 clearBtn.addEventListener("click", clearAll);
@@ -1212,11 +1372,11 @@ if (racksTbody) {
   racksTbody.addEventListener("click", (e) => {
     const row = e.target.closest("tr.rack-row");
     if (!row) return;
-    const rack = row.dataset.rack || "";
-    if (!rack) return;
-    if (expandedRacks.has(rack)) expandedRacks.delete(rack);
-    else expandedRacks.add(rack);
-    renderRacks();
+    const palletId = row.dataset.rack || "";
+    if (!palletId) return;
+    if (expandedPallets.has(palletId)) expandedPallets.delete(palletId);
+    else expandedPallets.add(palletId);
+    renderPallets();
   });
 }
 
@@ -1230,6 +1390,7 @@ document.querySelectorAll(".tab-btn").forEach(btn => {
 });
 
 initializeAutoSubmitToggle();
+updateActivePalletState();
 mapCountEl.textContent = Math.max(Object.keys(serialToPnr).length, Object.keys(serialToBoxId).length).toLocaleString();
 renderAll();
 serialInput.focus();
