@@ -147,6 +147,12 @@
   <div class="card">
     <h1>Inventory Count Scanner</h1>
 
+    <div class="tabs">
+      <button class="tab-btn" data-tab="summaryTab">Summary by PN-R</button>
+      <button class="tab-btn active" data-tab="racksTab">Pallets</button>
+      <button class="tab-btn" data-tab="explorerTab">Pallet Explorer</button>
+    </div>
+
     <div class="button-row top-data-row">
       <button id="loadLookupBtn" class="secondary">Load Lookup File</button>
       <input id="lookupFileInput" type="file" accept=".xlsx,.xls,.xlsm,.xlsb,.csv,.txt,.xml" class="hidden" />
@@ -154,12 +160,6 @@
       <button id="importMergeBtn">Import & Merge Data</button>
       <input id="importMergeFileInput" type="file" accept=".xlsx,.xls,.xlsm,.xlsb,.xml,.csv,.txt" class="hidden" />
       <button id="exportDataBtn" class="secondary">Export Data</button>
-    </div>
-
-    <div class="tabs">
-      <button class="tab-btn" data-tab="summaryTab">Summary by PN-R</button>
-      <button class="tab-btn active" data-tab="racksTab">Pallets</button>
-      <button class="tab-btn" data-tab="explorerTab">Pallet Explorer</button>
     </div>
 
     <div class="toolbar">
