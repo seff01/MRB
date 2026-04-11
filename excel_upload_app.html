@@ -204,13 +204,6 @@
       <div class="pill">Pallet GPN Lock: <strong id="activePalletLock">-</strong></div>
     </div>
 
-    <div id="palletQrWrap" class="hidden" style="margin-bottom:12px;">
-      <img id="palletQrImage" alt="Pallet QR Code" style="width:220px;height:220px;border:1px solid var(--line);border-radius:8px;background:#fff;padding:8px;" />
-      <div style="margin-top:8px;">
-        <a id="downloadPalletQrLink" href="#" download="pallet_qr.png" style="color:#93c5fd;">Download Pallet QR</a>
-      </div>
-    </div>
-
     <div class="metrics">
       <div class="pill">Total Scans: <strong id="totalScans">0</strong></div>
       <div class="pill">Unique Serials: <strong id="uniqueSerials">0</strong></div>
@@ -307,9 +300,6 @@ const uniquePnrsEl = document.getElementById("uniquePnrs");
 const mapCountEl = document.getElementById("mapCount");
 const activePalletIdEl = document.getElementById("activePalletId");
 const activePalletLockEl = document.getElementById("activePalletLock");
-const palletQrWrap = document.getElementById("palletQrWrap");
-const palletQrImage = document.getElementById("palletQrImage");
-const downloadPalletQrLink = document.getElementById("downloadPalletQrLink");
 const summaryTbody = document.querySelector("#summaryTable tbody");
 const detailsTbody = document.querySelector("#detailsTable tbody");
 const racksTbody = document.querySelector("#racksTable tbody");
@@ -592,18 +582,17 @@ async function renderPalletQr(options = {}) {
     return;
   }
   try {
-    const dataUrl = await getPalletQrUrl(targetPalletId);
-    if (palletQrImage) palletQrImage.src = dataUrl;
-    if (downloadPalletQrLink) {
-      downloadPalletQrLink.href = dataUrl;
-      downloadPalletQrLink.download = `${targetPalletId}_QR.png`;
+    await getPalletQrUrl(targetPalletId);
+    if (!silent) {
+      expandedExplorerPallets.add(targetPalletId);
+      await renderPalletExplorer();
+      activateTab("explorerTab");
     }
-    palletQrWrap?.classList.remove("hidden");
     if (!silent) {
       setStatus(
         window.QRCode && window.QRCode.toDataURL
-          ? `QR code generated for pallet ${targetPalletId}.`
-          : `QR code generated via fallback service for pallet ${targetPalletId}.`,
+          ? `QR code ready for pallet ${targetPalletId}. Opened in Pallet Explorer.`
+          : `QR code ready via fallback service for pallet ${targetPalletId}. Opened in Pallet Explorer.`,
         "ok"
       );
     }
@@ -798,9 +787,6 @@ function clearAll() {
   expandedExplorerBoxes.clear();
   setActivePallet("", "");
   updateActivePalletState();
-  palletQrWrap?.classList.add("hidden");
-  if (palletQrImage) palletQrImage.removeAttribute("src");
-  if (downloadPalletQrLink) downloadPalletQrLink.removeAttribute("href");
   renderAll();
   setStatus("All scanned entries cleared.", "warn");
   serialInput.focus();
@@ -1738,14 +1724,17 @@ if (explorerTbody) {
   });
 }
 
+function activateTab(tabId) {
+  const target = tabButtons.find(btn => btn.dataset.tab === tabId);
+  if (!target || target.disabled) return;
+  tabButtons.forEach(btn => btn.classList.remove("active"));
+  target.classList.add("active");
+  document.querySelectorAll(".tab-panel").forEach(panel => panel.classList.add("hidden"));
+  document.getElementById(tabId)?.classList.remove("hidden");
+}
+
 tabButtons.forEach(btn => {
-  btn.addEventListener("click", () => {
-    if (btn.disabled) return;
-    document.querySelectorAll(".tab-btn").forEach(b=>b.classList.remove("active"));
-    btn.classList.add("active");
-    document.querySelectorAll(".tab-panel").forEach(p=>p.classList.add("hidden"));
-    document.getElementById(btn.dataset.tab).classList.remove("hidden");
-  });
+  btn.addEventListener("click", () => activateTab(btn.dataset.tab));
 });
 
 initializeAutoSubmitToggle();
