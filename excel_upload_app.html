@@ -21,6 +21,10 @@
     padding: 8px 12px; cursor:pointer; font-weight:600;
   }
   .tab-btn.active { background: #1d4ed8; border-color:#2563eb; }
+  .tab-btn:disabled {
+    opacity: .45;
+    cursor: not-allowed;
+  }
   .toolbar { display:grid; grid-template-columns: 1.3fr 1.3fr .8fr 1fr .9fr; gap:10px; margin-bottom:10px; }
   .button-row { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:8px; }
   .button-row button { min-width:140px; }
@@ -92,6 +96,10 @@
   button.primary { background:#15803d; border-color:#22c55e; }
   button.danger { background:#7f1d1d; border-color:#ef4444; }
   button.secondary { background:#1d4ed8; border-color:#3b82f6; }
+  button:disabled {
+    opacity: .45;
+    cursor: not-allowed;
+  }
   .status { margin: 6px 0 12px; font-size: 13px; }
   .status.ok { color:#86efac; }
   .status.warn { color:#fcd34d; }
@@ -307,6 +315,7 @@ const detailsTbody = document.querySelector("#detailsTable tbody");
 const racksTbody = document.querySelector("#racksTable tbody");
 const explorerTbody = document.querySelector("#explorerTable tbody");
 const filterInput = document.getElementById("filterInput");
+const tabButtons = Array.from(document.querySelectorAll(".tab-btn"));
 
 let scans = loadScans();
 let serialToPnr = loadLookupMap();
@@ -535,6 +544,7 @@ function updateActivePalletState() {
 }
 
 function startNewPallet() {
+  if (!enforceLookupGate()) return;
   const initials = normalize(initialsInput.value);
   if (!initials) {
     setStatus("Enter initials first, then start a new pallet.", "err");
@@ -574,6 +584,7 @@ async function getPalletQrUrl(palletId) {
 }
 
 async function renderPalletQr(options = {}) {
+  if (!enforceLookupGate()) return;
   const silent = !!options.silent;
   const targetPalletId = normalize(options.palletId || currentPalletId);
   if (!targetPalletId) {
@@ -637,8 +648,47 @@ function autoFillPNR() {
   }
 }
 
+function hasLookupData() {
+  return Object.keys(serialToPnr).length > 0 || Object.keys(serialToBoxId).length > 0;
+}
+
+function setFeaturesEnabled(enabled) {
+  const guardedElements = [
+    serialInput,
+    pnrInput,
+    initialsInput,
+    autoSubmitToggle,
+    addRackBtn,
+    generateQrBtn,
+    addBtn,
+    undoBtn,
+    clearBtn,
+    clearLookupBtn,
+    importMergeBtn,
+    exportDataBtn
+  ];
+  guardedElements.forEach(el => {
+    if (!el) return;
+    el.disabled = !enabled;
+  });
+  tabButtons.forEach(btn => {
+    if (!btn) return;
+    btn.disabled = !enabled;
+  });
+}
+
+function enforceLookupGate(showStatus = true) {
+  const enabled = hasLookupData();
+  setFeaturesEnabled(enabled);
+  if (!enabled && showStatus) {
+    setStatus("Upload a lookup file first to unlock scanner features.", "warn");
+  }
+  return enabled;
+}
+
 
 function addEntry() {
+  if (!enforceLookupGate()) return;
   const sn = normalize(serialInput.value);
   let pnr = normalize(pnrInput.value);
   const initials = normalize(initialsInput.value);
@@ -1348,6 +1398,7 @@ async function handleLookupFileUpload(file) {
     persistLookupMap();
     renderMetrics();
     autoFillPNR();
+    enforceLookupGate(false);
     setStatus(
       `Lookup file loaded: PN-R ${pnrEntryCount}, L10 Box ID ${boxEntryCount} (${parsed.pnrConflicts + parsed.boxConflicts} conflicts overwritten, ${parsed.skippedBlank} blank rows skipped).`,
       "ok"
@@ -1366,6 +1417,7 @@ function clearLookupMap() {
   persistLookupMap();
   renderMetrics();
   autoFillPNR();
+  enforceLookupGate(false);
   setStatus("Lookup map cleared. PN-R and L10 Box ID auto-fill now require a loaded lookup file.", "warn");
 }
 
@@ -1552,6 +1604,7 @@ function cancelAutoSubmitTimer() {
 
 function scheduleAutoSubmit(source = "serial") {
   cancelAutoSubmitTimer();
+  if (!hasLookupData()) return;
   if (!isAutoSubmitEnabled()) return;
 
   const sn = normalize(serialInput.value);
@@ -1675,8 +1728,9 @@ if (explorerTbody) {
   });
 }
 
-document.querySelectorAll(".tab-btn").forEach(btn => {
+tabButtons.forEach(btn => {
   btn.addEventListener("click", () => {
+    if (btn.disabled) return;
     document.querySelectorAll(".tab-btn").forEach(b=>b.classList.remove("active"));
     btn.classList.add("active");
     document.querySelectorAll(".tab-panel").forEach(p=>p.classList.add("hidden"));
@@ -1686,6 +1740,7 @@ document.querySelectorAll(".tab-btn").forEach(btn => {
 
 initializeAutoSubmitToggle();
 updateActivePalletState();
+enforceLookupGate();
 mapCountEl.textContent = Math.max(Object.keys(serialToPnr).length, Object.keys(serialToBoxId).length).toLocaleString();
 renderAll();
 serialInput.focus();
