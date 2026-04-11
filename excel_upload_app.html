@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Excel Upload App</title>
+<style>
+  :root {
+    --bg:#0f172a;
+    --panel:#111827;
+    --text:#e5e7eb;
+    --muted:#9ca3af;
+    --accent:#3b82f6;
+    --line:#374151;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    font-family: Arial, Helvetica, sans-serif;
+    background: linear-gradient(135deg, #0b1220, #101827);
+    color: var(--text);
+  }
+
+  .wrap {
+    max-width: 1200px;
+    margin: 18px auto;
+    padding: 14px;
+  }
+
+  .card {
+    background: rgba(17, 24, 39, 0.95);
+    border: 1px solid var(--line);
+    border-radius: 14px;
+    padding: 14px;
+    box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+  }
+
+  h1 {
+    margin: 0 0 8px 0;
+    font-size: 24px;
+  }
+
+  .sub {
+    color: var(--muted);
+    font-size: 13px;
+    margin-bottom: 14px;
+    line-height: 1.45;
+  }
+
+  .toolbar {
+    display: grid;
+    grid-template-columns: 1.2fr auto auto;
+    gap: 10px;
+    margin-bottom: 12px;
+    align-items: end;
+  }
+
+  .field {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  label {
+    font-size: 12px;
+    color: var(--muted);
+  }
+
+  select, button {
+    background: #0b1220;
+    border: 1px solid var(--line);
+    color: var(--text);
+    border-radius: 10px;
+    padding: 10px 12px;
+    font-size: 14px;
+    min-height: 42px;
+  }
+
+  button {
+    cursor: pointer;
+    font-weight: 600;
+  }
+
+  button.primary {
+    background: #1d4ed8;
+    border-color: #2563eb;
+  }
+
+  button:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  .hidden { display: none; }
+
+  .status {
+    margin: 6px 0 12px;
+    font-size: 13px;
+  }
+
+  .status.ok { color: #86efac; }
+  .status.warn { color: #fcd34d; }
+  .status.err { color: #fca5a5; }
+  .status.muted { color: var(--muted); }
+
+  .metrics {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+    margin-bottom: 12px;
+  }
+
+  .pill {
+    background: #0b1220;
+    border: 1px solid var(--line);
+    border-radius: 999px;
+    padding: 8px 12px;
+    font-size: 13px;
+  }
+
+  .table-wrap {
+    max-height: 540px;
+    overflow: auto;
+    border: 1px solid var(--line);
+    border-radius: 12px;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+  }
+
+  th, td {
+    border-bottom: 1px solid var(--line);
+    padding: 8px 10px;
+    text-align: left;
+    font-size: 13px;
+    white-space: nowrap;
+  }
+
+  th {
+    color: #cbd5e1;
+    position: sticky;
+    top: 0;
+    background: #111827;
+    z-index: 2;
+  }
+
+  .muted {
+    color: var(--muted);
+    margin-top: 10px;
+    font-size: 12px;
+  }
+
+  @media (max-width: 900px) {
+    .toolbar {
+      grid-template-columns: 1fr;
+    }
+    button {
+      width: 100%;
+    }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="card">
+    <h1>Excel Upload App</h1>
+    <div class="sub">
+      Built using the existing inventory HTML as a visual reference. Upload any Excel file from this repo
+      (for example: <strong>MRB_Box_List_20260410_094859.xlsx</strong>) to preview sheet data.
+    </div>
+
+    <div class="toolbar">
+      <div class="field">
+        <label for="sheetSelect">Workbook Sheet</label>
+        <select id="sheetSelect" disabled>
+          <option value="">Upload a file first</option>
+        </select>
+      </div>
+      <button id="uploadBtn" class="primary">Upload Excel File</button>
+      <button id="clearBtn">Clear</button>
+      <input id="fileInput" class="hidden" type="file" accept=".xlsx,.xls,.xlsm,.xlsb" />
+    </div>
+
+    <div id="statusMsg" class="status muted">Ready. Click "Upload Excel File" to begin.</div>
+
+    <div class="metrics">
+      <div class="pill">File: <strong id="fileName">-</strong></div>
+      <div class="pill">Sheets: <strong id="sheetCount">0</strong></div>
+      <div class="pill">Rows (selected sheet): <strong id="rowCount">0</strong></div>
+      <div class="pill">Columns (selected sheet): <strong id="colCount">0</strong></div>
+    </div>
+
+    <div class="table-wrap">
+      <table id="previewTable">
+        <thead>
+          <tr><th>Preview</th></tr>
+        </thead>
+        <tbody>
+          <tr><td class="muted">No data loaded.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="muted">Preview is limited to the first 200 rows for browser performance.</div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
+<script>
+  const uploadBtn = document.getElementById("uploadBtn");
+  const clearBtn = document.getElementById("clearBtn");
+  const fileInput = document.getElementById("fileInput");
+  const sheetSelect = document.getElementById("sheetSelect");
+  const statusMsg = document.getElementById("statusMsg");
+  const fileNameEl = document.getElementById("fileName");
+  const sheetCountEl = document.getElementById("sheetCount");
+  const rowCountEl = document.getElementById("rowCount");
+  const colCountEl = document.getElementById("colCount");
+  const previewTable = document.getElementById("previewTable");
+  const previewHead = previewTable.querySelector("thead");
+  const previewBody = previewTable.querySelector("tbody");
+
+  const MAX_PREVIEW_ROWS = 200;
+  let workbook = null;
+
+  function setStatus(message, type = "muted") {
+    statusMsg.className = `status ${type}`;
+    statusMsg.textContent = message;
+  }
+
+  function resetPreview(message = "No data loaded.") {
+    previewHead.innerHTML = "<tr><th>Preview</th></tr>";
+    previewBody.innerHTML = `<tr><td class="muted">${message}</td></tr>`;
+    rowCountEl.textContent = "0";
+    colCountEl.textContent = "0";
+  }
+
+  function renderSheet(sheetName) {
+    if (!workbook || !sheetName) {
+      resetPreview();
+      return;
+    }
+
+    const sheet = workbook.Sheets[sheetName];
+    if (!sheet) {
+      setStatus(`Could not find sheet "${sheetName}".`, "err");
+      resetPreview("Sheet not found.");
+      return;
+    }
+
+    const matrix = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: "" });
+    if (!matrix.length) {
+      setStatus(`Loaded "${sheetName}" (empty sheet).`, "warn");
+      resetPreview("Selected sheet is empty.");
+      return;
+    }
+
+    const maxCols = matrix.reduce((acc, row) => Math.max(acc, row.length), 0);
+    const rowsToShow = matrix.slice(0, MAX_PREVIEW_ROWS);
+
+    previewHead.innerHTML = "";
+    const headerRow = document.createElement("tr");
+    for (let i = 0; i < maxCols; i += 1) {
+      const th = document.createElement("th");
+      th.textContent = `Column ${i + 1}`;
+      headerRow.appendChild(th);
+    }
+    previewHead.appendChild(headerRow);
+
+    previewBody.innerHTML = "";
+    rowsToShow.forEach((row) => {
+      const tr = document.createElement("tr");
+      for (let i = 0; i < maxCols; i += 1) {
+        const td = document.createElement("td");
+        td.textContent = row[i] ?? "";
+        tr.appendChild(td);
+      }
+      previewBody.appendChild(tr);
+    });
+
+    rowCountEl.textContent = String(matrix.length);
+    colCountEl.textContent = String(maxCols);
+    setStatus(`Showing "${sheetName}" (${rowsToShow.length}/${matrix.length} rows).`, "ok");
+  }
+
+  function populateSheetSelect(sheetNames) {
+    sheetSelect.innerHTML = "";
+    if (!sheetNames.length) {
+      const option = document.createElement("option");
+      option.value = "";
+      option.textContent = "No sheets found";
+      sheetSelect.appendChild(option);
+      sheetSelect.disabled = true;
+      return;
+    }
+
+    sheetNames.forEach((name, idx) => {
+      const option = document.createElement("option");
+      option.value = name;
+      option.textContent = `${idx + 1}. ${name}`;
+      sheetSelect.appendChild(option);
+    });
+    sheetSelect.disabled = false;
+  }
+
+  uploadBtn.addEventListener("click", () => fileInput.click());
+
+  fileInput.addEventListener("change", (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    setStatus(`Reading "${file.name}"...`, "muted");
+    const reader = new FileReader();
+    reader.onload = (loadEvent) => {
+      try {
+        const arrayBuffer = loadEvent.target.result;
+        workbook = XLSX.read(arrayBuffer, { type: "array" });
+        const names = workbook.SheetNames || [];
+
+        fileNameEl.textContent = file.name;
+        sheetCountEl.textContent = String(names.length);
+        populateSheetSelect(names);
+
+        if (!names.length) {
+          setStatus(`"${file.name}" has no sheets.`, "warn");
+          resetPreview("Workbook has no sheets.");
+          return;
+        }
+
+        sheetSelect.value = names[0];
+        renderSheet(names[0]);
+      } catch (error) {
+        console.error(error);
+        workbook = null;
+        fileNameEl.textContent = "-";
+        sheetCountEl.textContent = "0";
+        sheetSelect.disabled = true;
+        setStatus("Failed to parse Excel file. Please upload a valid workbook.", "err");
+        resetPreview("Upload failed.");
+      }
+    };
+
+    reader.onerror = () => {
+      setStatus("Could not read the selected file.", "err");
+      resetPreview("Read error.");
+    };
+
+    reader.readAsArrayBuffer(file);
+    fileInput.value = "";
+  });
+
+  sheetSelect.addEventListener("change", (event) => {
+    renderSheet(event.target.value);
+  });
+
+  clearBtn.addEventListener("click", () => {
+    workbook = null;
+    fileNameEl.textContent = "-";
+    sheetCountEl.textContent = "0";
+    sheetSelect.innerHTML = '<option value="">Upload a file first</option>';
+    sheetSelect.disabled = true;
+    setStatus("Cleared workbook data.", "muted");
+    resetPreview();
+  });
+
+  resetPreview();
+</script>
+</body>
+</html>
