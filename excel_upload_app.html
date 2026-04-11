@@ -402,14 +402,19 @@ function startNewPallet() {
 }
 
 function buildPalletQrDataUrl(palletId) {
-  if (!window.QRCode || !window.QRCode.toDataURL) throw new Error("QR library unavailable.");
-  return new Promise((resolve, reject) => {
-    window.QRCode.toDataURL(
-      palletId,
-      { width: 280, margin: 1, errorCorrectionLevel: "M", color: { dark: "#000000", light: "#FFFFFF" } },
-      (err, url) => (err ? reject(err) : resolve(url))
-    );
-  });
+  if (window.QRCode && window.QRCode.toDataURL) {
+    return new Promise((resolve, reject) => {
+      window.QRCode.toDataURL(
+        palletId,
+        { width: 280, margin: 1, errorCorrectionLevel: "M", color: { dark: "#000000", light: "#FFFFFF" } },
+        (err, url) => (err ? reject(err) : resolve(url))
+      );
+    });
+  }
+  // Fallback for strict file:// environments where CDN scripts are blocked.
+  return Promise.resolve(
+    `https://api.qrserver.com/v1/create-qr-code/?size=280x280&format=png&data=${encodeURIComponent(palletId)}`
+  );
 }
 
 async function renderPalletQr() {
@@ -425,7 +430,12 @@ async function renderPalletQr() {
       downloadPalletQrLink.download = `${currentPalletId}_QR.png`;
     }
     palletQrWrap?.classList.remove("hidden");
-    setStatus(`QR code generated for pallet ${currentPalletId}.`, "ok");
+    setStatus(
+      window.QRCode && window.QRCode.toDataURL
+        ? `QR code generated for pallet ${currentPalletId}.`
+        : `QR code generated via fallback service for pallet ${currentPalletId}.`,
+      "ok"
+    );
   } catch (e) {
     console.error(e);
     setStatus("Failed to generate pallet QR code.", "err");
