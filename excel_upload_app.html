@@ -790,7 +790,17 @@ function clearAll() {
   if (!confirm("Clear all scanned entries? This cannot be undone.")) return;
   scans = [];
   persistScans();
+  palletRegistry = [];
+  persistPalletRegistry();
+  palletQrCache.clear();
+  expandedPallets.clear();
+  expandedExplorerPallets.clear();
+  expandedExplorerBoxes.clear();
+  setActivePallet("", "");
   updateActivePalletState();
+  palletQrWrap?.classList.add("hidden");
+  if (palletQrImage) palletQrImage.removeAttribute("src");
+  if (downloadPalletQrLink) downloadPalletQrLink.removeAttribute("href");
   renderAll();
   setStatus("All scanned entries cleared.", "warn");
   serialInput.focus();
