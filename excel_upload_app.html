@@ -1626,15 +1626,25 @@ function buildPalletWordSection(palletGroup, qrDataUrl = "") {
 
   return `
     <section class="pallet-sheet">
-      <div class="qr-box">
-        ${qrDataUrl ? `<img src="${qrDataUrl}" alt="QR ${escapeHtml(palletId)}" />` : '<div class="qr-label">QR<br/>CODE</div>'}
-      </div>
-      <div class="sheet-header">
-        <div class="header-text">
-          <div class="header-line"><strong>Pallet ID:</strong> ${escapeHtml(palletId)}</div>
-          <div class="header-line"><strong>GPN:</strong> ${escapeHtml(gpnHeader)} <span class="qty"><strong>Qty:</strong> ${qty}</span></div>
-        </div>
-      </div>
+      <table class="header-table" role="presentation" cellpadding="0" cellspacing="0">
+        <tr>
+          <td class="header-cell">
+            <div class="sheet-header">
+              <div class="header-text">
+                <div class="header-line"><strong>Pallet ID:</strong> ${escapeHtml(palletId)}</div>
+                <div class="header-line"><strong>GPN:</strong> ${escapeHtml(gpnHeader)} <span class="qty"><strong>Qty:</strong> ${qty}</span></div>
+              </div>
+            </div>
+          </td>
+          <td class="qr-cell">
+            <div class="qr-box">
+              ${qrDataUrl
+                ? `<img src="${qrDataUrl}" width="78" height="78" style="width:78px;height:78px;display:block;" alt="QR ${escapeHtml(palletId)}" />`
+                : '<div class="qr-label">QR<br/>CODE</div>'}
+            </div>
+          </td>
+        </tr>
+      </table>
       <div class="divider">- - - - - - - - - - - - - - - - - - - - - - -</div>
       <div class="sheet-body">
         ${boxBlocks || '<div class="box-block"><div class="box-title">Box - (NO BOX ID)</div><div class="pairs-wrap"><div class="pair-line muted">-</div></div></div>'}
@@ -1654,25 +1664,24 @@ xmlns="http://www.w3.org/TR/REC-html40">
   <style>
     @page { size: Letter; margin: 0.45in; }
     body { font-family: Calibri, Arial, sans-serif; font-size: 14px; color: #111; }
-    .pallet-sheet { position: relative; page-break-after: always; margin-bottom: 14px; padding-right: 118px; }
+    .pallet-sheet { page-break-after: always; margin-bottom: 14px; }
     .pallet-sheet:last-child { page-break-after: auto; }
+    .header-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+    .header-cell { vertical-align: top; }
+    .qr-cell { width: 98px; vertical-align: top; text-align: right; }
     .sheet-header { display: block; }
-    .header-text { flex: 1 1 auto; }
     .header-line { font-size: 21px; line-height: 1.3; margin-bottom: 5px; }
     .qty { margin-left: 16px; }
     .qr-box {
-      position: absolute;
-      top: 0;
-      right: 0;
-      width: 98px; height: 98px;
+      width: 86px; height: 86px;
       border: 1px solid #111;
+      margin-left: auto;
       display: flex; align-items: center; justify-content: center;
-      flex: 0 0 auto;
       text-align: center;
       font-weight: 700;
       font-size: 13px;
     }
-    .qr-box img { width: 90px; height: 90px; object-fit: contain; }
+    .qr-box img { width: 78px; height: 78px; object-fit: contain; margin: 3px auto; }
     .qr-label { letter-spacing: 0.5px; line-height: 1.2; }
     .divider { margin: 16px 0 14px; color: #444; letter-spacing: 2px; }
     .box-block { margin: 0 0 22px; }
