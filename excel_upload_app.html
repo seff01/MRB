@@ -160,6 +160,7 @@
       <button id="importMergeBtn">Import & Merge Data</button>
       <input id="importMergeFileInput" type="file" accept=".xlsx,.xls,.xlsm,.xlsb,.xml,.csv,.txt" class="hidden" />
       <button id="exportDataBtn" class="secondary">Export Data</button>
+      <button id="exportExplorerWordBtn" class="secondary">Export 3rd Tab to Word</button>
     </div>
 
     <div class="toolbar">
@@ -294,6 +295,7 @@ const clearLookupBtn = document.getElementById("clearLookupBtn");
 const importMergeBtn = document.getElementById("importMergeBtn");
 const importMergeFileInput = document.getElementById("importMergeFileInput");
 const exportDataBtn = document.getElementById("exportDataBtn");
+const exportExplorerWordBtn = document.getElementById("exportExplorerWordBtn");
 const statusMsg = document.getElementById("statusMsg");
 const totalScansEl = document.getElementById("totalScans");
 const uniqueSerialsEl = document.getElementById("uniqueSerials");
@@ -1584,6 +1586,130 @@ function exportDataWorkbook() {
   setStatus("Exported merge workbook (.xls) with Summary and Pallets sheets.", "ok");
 }
 
+function formatPalletGpnHeader(rows) {
+  const gpns = Array.from(new Set(rows.map(row => normalize(row.pnr || "")).filter(Boolean))).sort();
+  if (!gpns.length) return "-";
+  if (gpns.length === 1) return gpns[0];
+  return `MULTIPLE (${gpns.join(", ")})`;
+}
+
+function buildPalletWordSection(palletGroup, qrDataUrl = "") {
+  const palletRows = Array.isArray(palletGroup?.rows) ? palletGroup.rows : [];
+  const qty = palletRows.length;
+  const palletId = palletGroup?.palletId || "(NO PALLET ID)";
+  const gpnHeader = formatPalletGpnHeader(palletRows);
+  const boxMap = new Map();
+
+  palletRows.forEach(row => {
+    const boxId = formatBoxIdDisplay(row.l10BoxId || "") || "(NO BOX ID)";
+    const gpn = normalize(row.pnr || "") || "-";
+    const sn = normalize(row.serial || "") || "-";
+    if (!boxMap.has(boxId)) boxMap.set(boxId, []);
+    const entries = boxMap.get(boxId);
+    if (!entries.some(entry => entry.gpn === gpn && entry.sn === sn)) {
+      entries.push({ gpn, sn });
+    }
+  });
+
+  const boxBlocks = Array.from(boxMap.entries()).map(([boxId, entries]) => {
+    const lines = entries.map(entry => `
+      <div class="pair-line">${escapeHtml(entry.gpn)} <span class="sn">${escapeHtml(entry.sn)}</span></div>
+    `).join("");
+    return `
+      <div class="box-block">
+        <div class="box-title">Box - ${escapeHtml(boxId)}</div>
+        <div class="pairs-wrap">${lines || '<div class="pair-line muted">-</div>'}</div>
+      </div>
+    `;
+  }).join("");
+
+  return `
+    <section class="pallet-sheet">
+      <div class="sheet-header">
+        <div class="header-text">
+          <div class="header-line"><strong>Pallet ID:</strong> ${escapeHtml(palletId)}</div>
+          <div class="header-line"><strong>GPN:</strong> ${escapeHtml(gpnHeader)} <span class="qty"><strong>Qty:</strong> ${qty}</span></div>
+        </div>
+        <div class="qr-box">
+          ${qrDataUrl ? `<img src="${qrDataUrl}" alt="QR ${escapeHtml(palletId)}" />` : '<div class="qr-label">QR<br/>CODE</div>'}
+        </div>
+      </div>
+      <div class="divider">- - - - - - - - - - - - - - - - - - - - - - -</div>
+      <div class="sheet-body">
+        ${boxBlocks || '<div class="box-block"><div class="box-title">Box - (NO BOX ID)</div><div class="pairs-wrap"><div class="pair-line muted">-</div></div></div>'}
+      </div>
+    </section>
+  `;
+}
+
+function buildPalletWordDocument(sheetSections) {
+  return `<!DOCTYPE html>
+<html xmlns:o="urn:schemas-microsoft-com:office:office"
+xmlns:w="urn:schemas-microsoft-com:office:word"
+xmlns="http://www.w3.org/TR/REC-html40">
+<head>
+  <meta charset="utf-8" />
+  <title>Pallet Explorer Print</title>
+  <style>
+    @page { size: Letter; margin: 0.45in; }
+    body { font-family: Calibri, Arial, sans-serif; font-size: 14px; color: #111; }
+    .pallet-sheet { page-break-after: always; margin-bottom: 14px; }
+    .pallet-sheet:last-child { page-break-after: auto; }
+    .sheet-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
+    .header-text { flex: 1 1 auto; }
+    .header-line { font-size: 21px; line-height: 1.3; margin-bottom: 5px; }
+    .qty { margin-left: 16px; }
+    .qr-box {
+      width: 132px; height: 132px;
+      border: 1px solid #111;
+      display: flex; align-items: center; justify-content: center;
+      flex: 0 0 auto;
+      text-align: center;
+      font-weight: 700;
+      font-size: 16px;
+    }
+    .qr-box img { width: 120px; height: 120px; object-fit: contain; }
+    .qr-label { letter-spacing: 0.5px; line-height: 1.2; }
+    .divider { margin: 16px 0 14px; color: #444; letter-spacing: 2px; }
+    .box-block { margin: 0 0 22px; }
+    .box-title { font-size: 33px; margin-bottom: 7px; font-family: "Comic Sans MS", "Segoe Print", cursive; }
+    .pairs-wrap { margin-left: 20px; }
+    .pair-line {
+      font-size: 31px;
+      line-height: 1.35;
+      font-family: "Comic Sans MS", "Segoe Print", cursive;
+    }
+    .sn { margin-left: 10px; }
+    .muted { color: #666; }
+  </style>
+</head>
+<body>
+  ${sheetSections}
+</body>
+</html>`;
+}
+
+async function exportPalletExplorerWord() {
+  const palletGroups = getPalletGroups();
+  if (!palletGroups.length) {
+    setStatus("Word export skipped. No pallets found in the 3rd tab.", "warn");
+    return;
+  }
+
+  const sections = [];
+  for (const group of palletGroups) {
+    let qrDataUrl = "";
+    try {
+      qrDataUrl = await getPalletQrUrl(group.palletId);
+    } catch {}
+    sections.push(buildPalletWordSection(group, qrDataUrl));
+  }
+
+  const docHtml = buildPalletWordDocument(sections.join("\n"));
+  downloadFile(`pallet_explorer_print_${Date.now()}.doc`, docHtml, "application/msword;charset=utf-8");
+  setStatus(`Exported ${palletGroups.length} pallet sheet(s) to Word (.doc).`, "ok");
+}
+
 async function handleImportMergeFile(file) {
   if (!file) return;
   try {
@@ -1705,6 +1831,7 @@ if (loadLookupBtn && lookupFileInput) {
 }
 if (clearLookupBtn) clearLookupBtn.addEventListener("click", clearLookupMap);
 if (exportDataBtn) exportDataBtn.addEventListener("click", exportDataWorkbook);
+if (exportExplorerWordBtn) exportExplorerWordBtn.addEventListener("click", exportPalletExplorerWord);
 if (importMergeBtn && importMergeFileInput) {
   importMergeBtn.addEventListener("click", () => importMergeFileInput.click());
   importMergeFileInput.addEventListener("change", (e) => handleImportMergeFile(e.target.files?.[0] || null));
