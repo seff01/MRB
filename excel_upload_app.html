@@ -1663,14 +1663,18 @@ xmlns="http://www.w3.org/TR/REC-html40">
   <title>Pallet Explorer Print</title>
   <style>
     @page { size: Letter; margin: 0.45in; }
-    body { font-family: Calibri, Arial, sans-serif; font-size: 14px; color: #111; }
+    body, table, td, div, span {
+      font-family: Calibri, Arial, sans-serif;
+      font-size: 11pt;
+      color: #111;
+    }
     .pallet-sheet { page-break-after: always; margin-bottom: 14px; }
     .pallet-sheet:last-child { page-break-after: auto; }
     .header-table { width: 100%; border-collapse: collapse; table-layout: fixed; }
     .header-cell { vertical-align: top; }
     .qr-cell { width: 98px; vertical-align: top; text-align: right; }
     .sheet-header { display: block; }
-    .header-line { font-size: 21px; line-height: 1.3; margin-bottom: 5px; }
+    .header-line { line-height: 1.3; margin-bottom: 5px; }
     .qty { margin-left: 16px; }
     .qr-box {
       width: 86px; height: 86px;
@@ -1679,19 +1683,15 @@ xmlns="http://www.w3.org/TR/REC-html40">
       display: flex; align-items: center; justify-content: center;
       text-align: center;
       font-weight: 700;
-      font-size: 13px;
+      font-size: 11pt;
     }
     .qr-box img { width: 78px; height: 78px; object-fit: contain; margin: 3px auto; }
     .qr-label { letter-spacing: 0.5px; line-height: 1.2; }
     .divider { margin: 16px 0 14px; color: #444; letter-spacing: 2px; }
     .box-block { margin: 0 0 22px; }
-    .box-title { font-size: 33px; margin-bottom: 7px; font-family: "Comic Sans MS", "Segoe Print", cursive; }
+    .box-title { margin-bottom: 7px; }
     .pairs-wrap { margin-left: 20px; }
-    .pair-line {
-      font-size: 31px;
-      line-height: 1.35;
-      font-family: "Comic Sans MS", "Segoe Print", cursive;
-    }
+    .pair-line { line-height: 1.35; }
     .sn { margin-left: 10px; }
     .muted { color: #666; }
   </style>
