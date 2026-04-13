@@ -190,6 +190,10 @@
           <span class="toggle-label">Enabled</span>
         </label>
       </div>
+      <div class="field">
+        <label for="qrTransferInput">Pallet QR Transfer</label>
+        <input id="qrTransferInput" autocomplete="off" placeholder="Scan pallet transfer QR and press Enter" />
+      </div>
     </div>
     <div class="button-row">
       <button id="addRackBtn" class="secondary">Start New Pallet</button>
@@ -278,12 +282,14 @@ const PALLET_COUNTER_KEY = "inventory_pallet_counter_v1";
 const ACTIVE_PALLET_ID_KEY = "inventory_active_pallet_id_v1";
 const ACTIVE_PALLET_GPN_LOCK_KEY = "inventory_active_pallet_gpn_lock_v1";
 const PALLET_REGISTRY_KEY = "inventory_pallet_registry_v1";
+const PALLET_QR_PAYLOAD_PREFIX = "MRBQR1";
 
 const serialInput = document.getElementById("serialInput");
 const pnrInput = document.getElementById("pnrInput");
 const initialsInput = document.getElementById("initialsInput");
 const rackInput = document.getElementById("rackInput");
 const autoSubmitToggle = document.getElementById("autoSubmitToggle");
+const qrTransferInput = document.getElementById("qrTransferInput");
 const addRackBtn = document.getElementById("addRackBtn");
 const generateQrBtn = document.getElementById("generateQrBtn");
 const addBtn = document.getElementById("addBtn");
@@ -402,6 +408,174 @@ function formatBoxIdDisplay(value) {
   if (raw.startsWith("BOX-")) return `BOX - ${raw.slice(4).trim()}`;
   if (raw.startsWith("BOX")) return `BOX - ${raw.slice(3).replace(/^[-\s]+/, "").trim()}`;
   return `BOX - ${raw}`;
+}
+
+function sanitizeQrField(value) {
+  return (value ?? "").toString().replace(/[|^~\r\n]/g, " ").trim();
+}
+
+function buildPalletQrPayloadText(palletId) {
+  const normalizedPalletId = normalize(palletId);
+  const palletRows = scans.filter(row => normalize(row.palletId || row.rack) === normalizedPalletId);
+  const gpnSet = Array.from(new Set(palletRows.map(row => normalize(row.pnr || "")).filter(Boolean)));
+  const initialsSet = Array.from(new Set(palletRows.map(row => normalize(row.initials || "")).filter(Boolean)));
+  const sharedGpn = gpnSet.length === 1 ? gpnSet[0] : "";
+  const sharedInitials = initialsSet.length === 1 ? initialsSet[0] : "";
+  const rowsToken = palletRows
+    .map(row => {
+      const serial = sanitizeQrField(normalize(row.serial || ""));
+      if (!serial) return "";
+      const boxId = sanitizeQrField(formatBoxIdDisplay(row.l10BoxId || ""));
+      const pnr = sanitizeQrField(normalize(row.pnr || ""));
+      const initials = sanitizeQrField(normalize(row.initials || ""));
+      const rowPnr = sharedGpn && pnr === sharedGpn ? "" : pnr;
+      const rowInitials = sharedInitials && initials === sharedInitials ? "" : initials;
+      return [serial, boxId, rowPnr, rowInitials].join("~");
+    })
+    .filter(Boolean)
+    .join("^");
+  return [
+    PALLET_QR_PAYLOAD_PREFIX,
+    `P=${sanitizeQrField(normalizedPalletId)}`,
+    `G=${sanitizeQrField(sharedGpn)}`,
+    `I=${sanitizeQrField(sharedInitials)}`,
+    `R=${rowsToken}`
+  ].join("|");
+}
+
+function isPalletQrTransferPayloadCandidate(value) {
+  const raw = (value ?? "").toString().trim();
+  if (!raw) return false;
+  return raw.toUpperCase().startsWith(`${PALLET_QR_PAYLOAD_PREFIX}|`);
+}
+
+function parsePalletQrTransferPayload(value) {
+  const raw = (value ?? "").toString().trim();
+  if (!isPalletQrTransferPayloadCandidate(raw)) return null;
+  const parts = raw.split("|");
+  if (normalize(parts[0]) !== PALLET_QR_PAYLOAD_PREFIX) return null;
+  const map = {};
+  parts.slice(1).forEach(part => {
+    const idx = part.indexOf("=");
+    if (idx <= 0) return;
+    const key = part.slice(0, idx).trim().toUpperCase();
+    const val = part.slice(idx + 1);
+    map[key] = val;
+  });
+  const rows = (map.R || "")
+    .split("^")
+    .filter(Boolean)
+    .map(token => {
+      const [serial = "", boxId = "", pnr = "", initials = ""] = token.split("~");
+      return [serial, boxId, pnr, initials];
+    });
+  return {
+    palletId: normalize(map.P || ""),
+    sharedGpn: normalize(map.G || ""),
+    sharedInitials: normalize(map.I || ""),
+    rows
+  };
+}
+
+function importPalletFromQrPayload(payload) {
+  const palletId = normalize(payload?.palletId || "");
+  if (!palletId) {
+    setStatus("Scanned QR payload is invalid (missing pallet ID).", "err");
+    return false;
+  }
+
+  const sharedGpn = normalize(payload?.sharedGpn || "");
+  const sharedInitials = normalize(payload?.sharedInitials || "");
+  const rows = Array.isArray(payload?.rows) ? payload.rows : [];
+  const existingSerials = new Set(scans.map(row => normalize(row.serial || "")));
+  let added = 0;
+  let skippedDuplicates = 0;
+  let skippedInvalid = 0;
+  let skippedMissingGpn = 0;
+
+  rows.forEach(row => {
+    if (!Array.isArray(row)) {
+      skippedInvalid++;
+      return;
+    }
+    const serial = normalize(row[0] || "");
+    if (!serial) {
+      skippedInvalid++;
+      return;
+    }
+    if (existingSerials.has(serial)) {
+      skippedDuplicates++;
+      return;
+    }
+    const rowBoxId = formatBoxIdDisplay(row[1] || "") || serialToBoxId[serial] || "";
+    const rowPnr = normalize(row[2] || "") || sharedGpn || serialToPnr[serial] || "";
+    if (!rowPnr) {
+      skippedMissingGpn++;
+      return;
+    }
+    const rowInitials = normalize(row[3] || "") || sharedInitials || normalize(initialsInput.value) || "QR";
+    scans.push({
+      ts: nowStamp(),
+      serial,
+      l10BoxId: rowBoxId,
+      pnr: rowPnr,
+      initials: rowInitials,
+      palletId,
+      rack: palletId,
+      lookupFound: !!serialToPnr[serial],
+      duplicate: false
+    });
+    existingSerials.add(serial);
+    added++;
+  });
+
+  if (!rows.length) {
+    setActivePallet(palletId, sharedGpn);
+    updateActivePalletState();
+    renderAll();
+    setStatus(`Pallet QR scanned: ${palletId}. No row data found in payload.`, "warn");
+    serialInput.value = "";
+    pnrInput.value = "";
+    serialInput.focus();
+    return true;
+  }
+
+  if (added > 0) {
+    persistScans();
+    palletQrCache.clear();
+    setActivePallet(palletId, sharedGpn);
+    updateActivePalletState();
+    renderAll();
+  }
+
+  const messageParts = [`Imported pallet ${palletId} from QR: ${added} added`];
+  if (skippedDuplicates) messageParts.push(`${skippedDuplicates} duplicates skipped`);
+  if (skippedMissingGpn) messageParts.push(`${skippedMissingGpn} missing GPN skipped`);
+  if (skippedInvalid) messageParts.push(`${skippedInvalid} invalid skipped`);
+  setStatus(`${messageParts.join(", ")}.`, added > 0 ? "ok" : "warn");
+  serialInput.value = "";
+  pnrInput.value = "";
+  serialInput.focus();
+  return true;
+}
+
+function importPalletFromQrTransferInput() {
+  const raw = (qrTransferInput?.value ?? "").toString().trim();
+  if (!raw) {
+    setStatus("Scan a pallet transfer QR code into the transfer field first.", "warn");
+    qrTransferInput?.focus();
+    return false;
+  }
+  const parsed = parsePalletQrTransferPayload(raw);
+  if (!parsed) {
+    setStatus("Scanned value is not a pallet transfer QR payload from this app.", "err");
+    qrTransferInput?.select?.();
+    qrTransferInput?.focus();
+    return false;
+  }
+  const imported = importPalletFromQrPayload(parsed);
+  if (imported && qrTransferInput) qrTransferInput.value = "";
+  return imported;
 }
 
 function loadPalletCounters() {
@@ -551,11 +725,11 @@ function startNewPallet() {
   serialInput.focus();
 }
 
-function buildPalletQrDataUrl(palletId) {
+function buildPalletQrDataUrl(qrValue) {
   if (window.QRCode && window.QRCode.toDataURL) {
     return new Promise((resolve, reject) => {
       window.QRCode.toDataURL(
-        palletId,
+        qrValue,
         { width: 280, margin: 1, errorCorrectionLevel: "M", color: { dark: "#000000", light: "#FFFFFF" } },
         (err, url) => (err ? reject(err) : resolve(url))
       );
@@ -563,17 +737,28 @@ function buildPalletQrDataUrl(palletId) {
   }
   // Fallback for strict file:// environments where CDN scripts are blocked.
   return Promise.resolve(
-    `https://api.qrserver.com/v1/create-qr-code/?size=280x280&format=png&data=${encodeURIComponent(palletId)}`
+    `https://api.qrserver.com/v1/create-qr-code/?size=280x280&format=png&data=${encodeURIComponent(qrValue)}`
   );
 }
 
 async function getPalletQrUrl(palletId) {
   const normalized = normalize(palletId);
   if (!normalized) return "";
-  if (palletQrCache.has(normalized)) return palletQrCache.get(normalized);
-  const url = await buildPalletQrDataUrl(normalized);
-  palletQrCache.set(normalized, url);
-  return url;
+  const payload = buildPalletQrPayloadText(normalized);
+  const payloadCacheKey = `${normalized}::${payload}`;
+  if (palletQrCache.has(payloadCacheKey)) return palletQrCache.get(payloadCacheKey);
+  try {
+    const url = await buildPalletQrDataUrl(payload);
+    palletQrCache.set(payloadCacheKey, url);
+    return url;
+  } catch (err) {
+    console.warn(`Pallet QR payload overflow for ${normalized}; falling back to pallet-id-only QR.`, err);
+    const idOnlyKey = `${normalized}::ID_ONLY`;
+    if (palletQrCache.has(idOnlyKey)) return palletQrCache.get(idOnlyKey);
+    const fallbackUrl = await buildPalletQrDataUrl(normalized);
+    palletQrCache.set(idOnlyKey, fallbackUrl);
+    return fallbackUrl;
+  }
 }
 
 async function renderPalletQr(options = {}) {
@@ -625,7 +810,13 @@ function initializeAutoSubmitToggle() {
 }
 
 function autoFillPNR() {
-  const sn = normalize(serialInput.value);
+  const rawSerial = (serialInput.value ?? "").toString().trim();
+  if (isPalletQrTransferPayloadCandidate(rawSerial)) {
+    pnrInput.value = "";
+    setStatus("Pallet transfer QR detected. Press Enter to import this pallet data.", "ok");
+    return;
+  }
+  const sn = normalize(rawSerial);
   if (!sn) {
     pnrInput.value = "";
     return;
@@ -680,8 +871,14 @@ function enforceLookupGate(showStatus = true) {
 
 
 function addEntry() {
+  const rawSerialValue = (serialInput.value ?? "").toString().trim();
+  const scannedPayload = parsePalletQrTransferPayload(rawSerialValue);
+  if (scannedPayload) {
+    importPalletFromQrPayload(scannedPayload);
+    return;
+  }
   if (!enforceLookupGate()) return;
-  const sn = normalize(serialInput.value);
+  const sn = normalize(rawSerialValue);
   let pnr = normalize(pnrInput.value);
   const initials = normalize(initialsInput.value);
   const palletId = normalize(currentPalletId);
@@ -1761,7 +1958,9 @@ function scheduleAutoSubmit(source = "serial") {
   if (!hasLookupData()) return;
   if (!isAutoSubmitEnabled()) return;
 
-  const sn = normalize(serialInput.value);
+  const rawSerial = (serialInput.value ?? "").toString().trim();
+  if (isPalletQrTransferPayloadCandidate(rawSerial)) return;
+  const sn = normalize(rawSerial);
   if (!sn) return;
 
   autoSubmitTimer = setTimeout(() => {
@@ -1825,6 +2024,15 @@ initialsInput.addEventListener("keydown", (e) => {
     serialInput.focus();
   }
 });
+
+if (qrTransferInput) {
+  qrTransferInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      importPalletFromQrTransferInput();
+    }
+  });
+}
 
 rackInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter") {
