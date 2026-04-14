@@ -190,7 +190,7 @@
           <span class="toggle-label">Enabled</span>
         </label>
       </div>
-      <div class="field">
+      <div id="qrTransferField" class="field hidden">
         <label for="qrTransferInput">Pallet QR Transfer</label>
         <input id="qrTransferInput" autocomplete="off" placeholder="Scan pallet transfer QR and press Enter" />
       </div>
@@ -290,6 +290,7 @@ const initialsInput = document.getElementById("initialsInput");
 const rackInput = document.getElementById("rackInput");
 const autoSubmitToggle = document.getElementById("autoSubmitToggle");
 const qrTransferInput = document.getElementById("qrTransferInput");
+const qrTransferField = document.getElementById("qrTransferField");
 const addRackBtn = document.getElementById("addRackBtn");
 const generateQrBtn = document.getElementById("generateQrBtn");
 const addBtn = document.getElementById("addBtn");
@@ -2098,6 +2099,11 @@ function activateTab(tabId) {
   target.classList.add("active");
   document.querySelectorAll(".tab-panel").forEach(panel => panel.classList.add("hidden"));
   document.getElementById(tabId)?.classList.remove("hidden");
+  if (qrTransferField) {
+    const showOnExplorer = tabId === "explorerTab";
+    qrTransferField.classList.toggle("hidden", !showOnExplorer);
+    if (!showOnExplorer && qrTransferInput) qrTransferInput.value = "";
+  }
 }
 
 tabButtons.forEach(btn => {
