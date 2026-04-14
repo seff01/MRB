@@ -432,6 +432,36 @@ function playNotInListSound() {
   }
 }
 
+function playAcceptedSound() {
+  try {
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    if (!AudioCtx) return;
+    if (!_audioCtx) _audioCtx = new AudioCtx();
+    if (_audioCtx.state === "suspended") _audioCtx.resume();
+    const now = _audioCtx.currentTime;
+    const gain = _audioCtx.createGain();
+    gain.connect(_audioCtx.destination);
+
+    const pulse = (freq, start, dur = 0.09) => {
+      const osc = _audioCtx.createOscillator();
+      osc.type = "sine";
+      osc.frequency.setValueAtTime(freq, start);
+      osc.connect(gain);
+      osc.start(start);
+      osc.stop(start + dur);
+    };
+
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(0.1, now + 0.015);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.22);
+
+    pulse(740, now);
+    pulse(880, now + 0.10);
+  } catch (e) {
+    console.warn("Accepted sound failed:", e);
+  }
+}
+
 function normalize(v) {
   return (v ?? "").toString().trim().toUpperCase();
 }
@@ -1030,7 +1060,6 @@ function addEntry() {
   let targetPalletId = palletId;
   let targetLock = "";
   if (isNotInList) {
-    playNotInListSound();
     targetPalletId = resolveNotInListPalletForScan();
     targetLock = getPalletLockGpn(targetPalletId);
     if (targetLock && pnr !== targetLock) {
@@ -1077,6 +1106,8 @@ function addEntry() {
   persistScans();
   updateActivePalletState();
   renderAll();
+  if (isNotInList) playNotInListSound();
+  else playAcceptedSound();
 
   setStatus(
     isNotInList
