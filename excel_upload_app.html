@@ -197,7 +197,7 @@
     </div>
     <div class="button-row">
       <button id="addRackBtn" class="secondary">Start New Pallet</button>
-      <button id="generateQrBtn" class="secondary">Generate Pallet QR</button>
+      <button id="closeNotInListPalletBtn" class="secondary">Close Pallet</button>
       <button id="addBtn" class="primary">Add Entry</button>
       <span class="spacer"></span>
       <button id="undoBtn">Undo Last</button>
@@ -294,7 +294,7 @@ const autoSubmitToggle = document.getElementById("autoSubmitToggle");
 const qrTransferInput = document.getElementById("qrTransferInput");
 const qrTransferField = document.getElementById("qrTransferField");
 const addRackBtn = document.getElementById("addRackBtn");
-const generateQrBtn = document.getElementById("generateQrBtn");
+const closeNotInListPalletBtn = document.getElementById("closeNotInListPalletBtn");
 const addBtn = document.getElementById("addBtn");
 const undoBtn = document.getElementById("undoBtn");
 const clearBtn = document.getElementById("clearBtn");
@@ -777,6 +777,19 @@ function resolveNotInListPalletForScan() {
   return newPalletId;
 }
 
+function closeActiveNotInListPallet(options = {}) {
+  const silent = !!options.silent;
+  const existing = normalize(activeNotInListPalletId);
+  if (!existing) {
+    if (!silent) setStatus('No active "Not In List" pallet to close.', "warn");
+    return false;
+  }
+  activeNotInListPalletId = "";
+  persistActiveNotInListPalletId();
+  if (!silent) setStatus(`Closed Not In List pallet: ${existing}.`, "ok");
+  return true;
+}
+
 function setActivePallet(palletId, lockGpn = "") {
   currentPalletId = normalize(palletId);
   currentPalletGpnLock = normalize(lockGpn);
@@ -811,6 +824,7 @@ function startNewPallet() {
   }
   const palletId = generatePalletId(initials);
   setActivePallet(palletId, "");
+  closeActiveNotInListPallet({ silent: true });
   renderPalletQr({ silent: true, palletId });
   setStatus(`New pallet started: ${palletId}. Pallet will lock to the first PN-R/GPN scanned.`, "ok");
   serialInput.focus();
@@ -933,7 +947,7 @@ function setFeaturesEnabled(enabled) {
     initialsInput,
     autoSubmitToggle,
     addRackBtn,
-    generateQrBtn,
+    closeNotInListPalletBtn,
     addBtn,
     undoBtn,
     clearBtn,
@@ -2159,7 +2173,7 @@ rackInput.addEventListener("keydown", (e) => {
 });
 
 addRackBtn.addEventListener("click", startNewPallet);
-if (generateQrBtn) generateQrBtn.addEventListener("click", renderPalletQr);
+if (closeNotInListPalletBtn) closeNotInListPalletBtn.addEventListener("click", () => closeActiveNotInListPallet());
 addBtn.addEventListener("click", addEntry);
 undoBtn.addEventListener("click", undoLast);
 clearBtn.addEventListener("click", clearAll);
