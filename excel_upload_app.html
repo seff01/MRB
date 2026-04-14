@@ -283,6 +283,8 @@ const ACTIVE_PALLET_ID_KEY = "inventory_active_pallet_id_v1";
 const ACTIVE_PALLET_GPN_LOCK_KEY = "inventory_active_pallet_gpn_lock_v1";
 const PALLET_REGISTRY_KEY = "inventory_pallet_registry_v1";
 const PALLET_QR_PAYLOAD_PREFIX = "MRBQR1";
+const ACTIVE_NOT_IN_LIST_PALLET_KEY = "inventory_not_in_list_active_pallet_v1";
+const NOT_IN_LIST_PALLET_PREFIX = "NOT IN LIST";
 
 const serialInput = document.getElementById("serialInput");
 const pnrInput = document.getElementById("pnrInput");
@@ -324,6 +326,7 @@ let palletCounters = loadPalletCounters();
 let palletRegistry = loadPalletRegistry();
 let currentPalletId = normalize(rackInput?.value || "");
 let currentPalletGpnLock = "";
+let activeNotInListPalletId = loadActiveNotInListPalletId();
 const expandedPallets = new Set();
 const expandedExplorerPallets = new Set();
 const expandedExplorerBoxes = new Set();
@@ -395,6 +398,37 @@ function playDuplicateSound() {
     pulse(660, now + 0.10);
   } catch (e) {
     console.warn("Duplicate sound failed:", e);
+  }
+}
+
+function playNotInListSound() {
+  try {
+    const AudioCtx = window.AudioContext || window.webkitAudioContext;
+    if (!AudioCtx) return;
+    if (!_audioCtx) _audioCtx = new AudioCtx();
+    if (_audioCtx.state === "suspended") _audioCtx.resume();
+    const now = _audioCtx.currentTime;
+    const gain = _audioCtx.createGain();
+    gain.connect(_audioCtx.destination);
+
+    const pulse = (freq, start, dur = 0.07) => {
+      const osc = _audioCtx.createOscillator();
+      osc.type = "triangle";
+      osc.frequency.setValueAtTime(freq, start);
+      osc.connect(gain);
+      osc.start(start);
+      osc.stop(start + dur);
+    };
+
+    gain.gain.setValueAtTime(0.0001, now);
+    gain.gain.exponentialRampToValueAtTime(0.11, now + 0.01);
+    gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.24);
+
+    pulse(1180, now);
+    pulse(980, now + 0.08);
+    pulse(780, now + 0.16);
+  } catch (e) {
+    console.warn("Not-in-list sound failed:", e);
   }
 }
 
@@ -668,6 +702,31 @@ function loadActivePalletState() {
   }
 }
 
+function loadActiveNotInListPalletId() {
+  try {
+    return normalize(localStorage.getItem(ACTIVE_NOT_IN_LIST_PALLET_KEY) || "");
+  } catch {
+    return "";
+  }
+}
+
+function persistActiveNotInListPalletId() {
+  try {
+    if (activeNotInListPalletId) {
+      localStorage.setItem(ACTIVE_NOT_IN_LIST_PALLET_KEY, activeNotInListPalletId);
+    } else {
+      localStorage.removeItem(ACTIVE_NOT_IN_LIST_PALLET_KEY);
+    }
+  } catch {}
+}
+
+function getPalletLockGpn(palletId) {
+  const normalized = normalize(palletId);
+  if (!normalized) return "";
+  const lockSource = scans.find(row => normalize(row.palletId || row.rack) === normalized && normalize(row.pnr));
+  return normalize(lockSource?.pnr || "");
+}
+
 function buildPalletSequenceKey(initials, dateStamp) {
   return `${initials}|${dateStamp}`;
 }
@@ -685,6 +744,37 @@ function generatePalletId(initials) {
   palletCounters[key] = next;
   persistPalletCounters();
   return `${initials}-${dateStamp}-${padPalletSequence(next)}`;
+}
+
+function generateNotInListPalletId() {
+  const d = new Date();
+  const pad = n => String(n).padStart(2, "0");
+  const dateStamp = `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}`;
+  const key = buildPalletSequenceKey("NOT_IN_LIST", dateStamp);
+  const next = (palletCounters[key] || 0) + 1;
+  palletCounters[key] = next;
+  persistPalletCounters();
+  return `${NOT_IN_LIST_PALLET_PREFIX}-${dateStamp}-${padPalletSequence(next)}`;
+}
+
+function resolveNotInListPalletForScan() {
+  const existing = normalize(activeNotInListPalletId);
+  const hasRows = existing
+    ? scans.some(row => normalize(row.palletId || row.rack) === existing)
+    : false;
+
+  if (existing && hasRows) {
+    const continueSame = confirm(
+      `SN is not in the uploaded list.\n\nActive Not In List pallet: ${existing}\n\nDo you want to continue using the same pallet for SN that are not in the list?\n\nPress OK to Continue.\nPress Cancel to Close Pallet and create a new Not In List pallet.`
+    );
+    if (continueSame) return existing;
+  }
+
+  const newPalletId = generateNotInListPalletId();
+  activeNotInListPalletId = newPalletId;
+  persistActiveNotInListPalletId();
+  registerPalletId(newPalletId);
+  return newPalletId;
 }
 
 function setActivePallet(palletId, lockGpn = "") {
@@ -828,7 +918,7 @@ function autoFillPNR() {
     setStatus(`Match found: ${sn} → ${found}`, "ok");
   } else {
     pnrInput.value = "";
-    setStatus(`No match found in lookup for serial: ${sn}. You can type PN-R manually if needed.`, "warn");
+    setStatus(`No match found for serial: ${sn}. Scan PN-R/GPN manually; item will be routed to a Not In List pallet.`, "warn");
   }
 }
 
@@ -888,11 +978,6 @@ function addEntry() {
     initialsInput.focus();
     return;
   }
-  if (!palletId) {
-    setStatus("Start a new pallet before scanning.", "err");
-    addRackBtn.focus();
-    return;
-  }
   if (!sn) {
     setStatus("Please scan or enter a Serial Number first.", "err");
     serialInput.focus();
@@ -911,29 +996,57 @@ function addEntry() {
   const lookedUpPnr = serialToPnr[sn] || "";
   const lookedUpBoxId = serialToBoxId[sn] || "";
   const lookupFound = !!lookedUpPnr;
+  const isNotInList = !lookupFound;
   if (!pnr && lookupFound) pnr = lookedUpPnr;
 
   if (!pnr) {
-    alert(`No GPN / PN-R was found in the lookup for serial: ${sn}. Please scan the PN-R / GPN now.`);
-    setStatus(`No GPN found for serial ${sn}. Scan the PN-R / GPN in the PN-R field to continue.`, "err");
+    if (isNotInList) {
+      playNotInListSound();
+      alert(`Serial ${sn} is not in the uploaded lookup list. Please scan the GPN / PN-R manually for this unit.`);
+      setStatus(`Serial ${sn} is not in list. Scan GPN/PN-R manually to route it into a Not In List pallet.`, "err");
+    } else {
+      alert(`No GPN / PN-R was found in the lookup for serial: ${sn}. Please scan the PN-R / GPN now.`);
+      setStatus(`No GPN found for serial ${sn}. Scan the PN-R / GPN in the PN-R field to continue.`, "err");
+    }
     pnrInput.focus();
     pnrInput.select?.();
     return;
   }
 
-  if (currentPalletGpnLock && pnr !== currentPalletGpnLock) {
-    setStatus(
-      `Pallet lock active: ${palletId} is locked to PN-R/GPN ${currentPalletGpnLock}. Start a new pallet for ${pnr}.`,
-      "err"
-    );
-    pnrInput.focus();
-    pnrInput.select?.();
-    return;
-  }
-
-  if (!currentPalletGpnLock) {
-    currentPalletGpnLock = pnr;
-    persistActivePalletState();
+  let targetPalletId = palletId;
+  let targetLock = "";
+  if (isNotInList) {
+    playNotInListSound();
+    targetPalletId = resolveNotInListPalletForScan();
+    targetLock = getPalletLockGpn(targetPalletId);
+    if (targetLock && pnr !== targetLock) {
+      setStatus(
+        `Not In List pallet lock active: ${targetPalletId} is locked to PN-R/GPN ${targetLock}.`,
+        "err"
+      );
+      pnrInput.focus();
+      pnrInput.select?.();
+      return;
+    }
+  } else {
+    if (!targetPalletId) {
+      setStatus("Start a new pallet before scanning.", "err");
+      addRackBtn.focus();
+      return;
+    }
+    if (currentPalletGpnLock && pnr !== currentPalletGpnLock) {
+      setStatus(
+        `Pallet lock active: ${targetPalletId} is locked to PN-R/GPN ${currentPalletGpnLock}. Start a new pallet for ${pnr}.`,
+        "err"
+      );
+      pnrInput.focus();
+      pnrInput.select?.();
+      return;
+    }
+    if (!currentPalletGpnLock) {
+      currentPalletGpnLock = pnr;
+      persistActivePalletState();
+    }
   }
 
   scans.push({
@@ -942,7 +1055,8 @@ function addEntry() {
     l10BoxId: lookedUpBoxId,
     pnr,
     initials,
-    rack: palletId,
+    palletId: targetPalletId,
+    rack: targetPalletId,
     lookupFound,
     duplicate: false
   });
@@ -951,10 +1065,10 @@ function addEntry() {
   renderAll();
 
   setStatus(
-    lookupFound
-      ? `Added to ${palletId}: ${sn} → ${pnr}${lookedUpBoxId ? ` (${lookedUpBoxId})` : ""}`
-      : `Added without lookup match: ${sn} → ${pnr}`,
-    lookupFound ? "ok" : "warn"
+    isNotInList
+      ? `Not In List routed to ${targetPalletId}: ${sn} → ${pnr}`
+      : `Added to ${targetPalletId}: ${sn} → ${pnr}${lookedUpBoxId ? ` (${lookedUpBoxId})` : ""}`,
+    isNotInList ? "warn" : "ok"
   );
 
   cancelAutoSubmitTimer();
@@ -986,6 +1100,8 @@ function clearAll() {
   expandedPallets.clear();
   expandedExplorerPallets.clear();
   expandedExplorerBoxes.clear();
+  activeNotInListPalletId = "";
+  persistActiveNotInListPalletId();
   setActivePallet("", "");
   updateActivePalletState();
   renderAll();
